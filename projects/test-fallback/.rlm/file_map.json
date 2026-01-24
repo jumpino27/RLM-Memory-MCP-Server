@@ -1,0 +1,211 @@
+[
+  {
+    "path": "constants.ts",
+    "description": "This file defines and exports immutable values, configuration settings, and reusable static data used throughout the application to ensure consistency.",
+    "keywords": [
+      "constants",
+      "exports",
+      "values",
+      "configuration",
+      "settings",
+      "reusable",
+      "static"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "index.ts",
+    "description": "This file typically serves as the main entry point for a TypeScript application or module, often used to export public members or initialize the program.",
+    "keywords": [
+      "typescript",
+      "application",
+      "public",
+      "members",
+      "initialize",
+      "program"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "schemas/index.ts",
+    "description": "This file serves as a central entry point that aggregates and exports various data validation or database schemas defined within the directory for easier access throughout the application.",
+    "keywords": [
+      "schemas",
+      "aggregates",
+      "exports",
+      "data",
+      "validation",
+      "database",
+      "directory"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "services/database.ts",
+    "description": "This file likely manages the application's connection to a database and provides utility functions for executing queries or interacting with data models.",
+    "keywords": [
+      "services",
+      "database",
+      "application",
+      "connection",
+      "utility",
+      "functions",
+      "executing"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "services/gemini.ts",
+    "description": "This file likely manages integration with Google's Gemini AI API, providing methods to send prompts and process responses for generative AI tasks.",
+    "keywords": [
+      "services",
+      "gemini",
+      "integration",
+      "google",
+      "api",
+      "providing",
+      "methods"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "tools/create-memory.ts",
+    "description": "This script likely provides a utility or function to initialize and store new memory entries or data structures within the application's storage system.",
+    "keywords": [
+      "tools",
+      "create",
+      "memory",
+      "script",
+      "utility",
+      "function",
+      "initialize"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "tools/find-files.ts",
+    "description": "This utility script searches for and retrieves a list of files within the project directory based on specified patterns or criteria.",
+    "keywords": [
+      "tools",
+      "find",
+      "utility",
+      "script",
+      "searches",
+      "retrieves",
+      "list"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "tools/index-codebase.ts",
+    "description": "This script scans and processes the project's source files to generate a searchable index or metadata repository for the codebase.",
+    "keywords": [
+      "tools",
+      "index",
+      "codebase",
+      "script",
+      "scans",
+      "processes",
+      "project"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "tools/init-status.ts",
+    "description": "This script likely initializes or tracks the status of a project's setup process or environment configuration. It may be used to verify whether necessary initialization steps have been successfully completed.",
+    "keywords": [
+      "tools",
+      "init",
+      "status",
+      "script",
+      "initializes",
+      "tracks",
+      "project"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "tools/recall-memory.ts",
+    "description": "This tool retrieves stored information or historical context from a memory system to provide relevant data for current tasks.",
+    "keywords": [
+      "tools",
+      "recall",
+      "memory",
+      "tool",
+      "retrieves",
+      "information",
+      "historical"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "types.ts",
+    "description": "This file likely defines shared TypeScript interfaces, types, and enums used to ensure consistent data structures and type safety across the application.",
+    "keywords": [
+      "types",
+      "shared",
+      "typescript",
+      "interfaces",
+      "enums",
+      "ensure",
+      "consistent"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "ui/server.ts",
+    "description": "This file likely implements a web server to serve the frontend application and handle server-side rendering or API requests for the user interface.",
+    "keywords": [
+      "server",
+      "web",
+      "serve",
+      "frontend",
+      "application",
+      "handle",
+      "side"
+    ],
+    "last_modified": "2026-01-24T21:36:03.504Z"
+  },
+  {
+    "path": "src/auth/jwt.ts",
+    "description": "This file implements JSON Web Token (JWT) logic, including token generation, validation, and middleware for securing application routes.",
+    "keywords": [
+      "auth",
+      "jwt",
+      "token",
+      "validation",
+      "middleware",
+      "json",
+      "web"
+    ],
+    "last_modified": "2026-01-24T21:36:06.500Z"
+  },
+  {
+    "path": "src/middleware/auth.ts",
+    "description": "This middleware validates JWT tokens to protect routes and ensure that only authenticated users can access specific endpoints.",
+    "keywords": [
+      "middleware",
+      "auth",
+      "jwt",
+      "validates",
+      "tokens",
+      "protect",
+      "routes"
+    ],
+    "last_modified": "2026-01-24T21:36:06.500Z"
+  },
+  {
+    "path": "src/routes/auth.ts",
+    "description": "This file defines the API endpoints for user authentication, including login, logout, and token refresh operations. It also integrates middleware to handle JWT-based route protection.",
+    "keywords": [
+      "routes",
+      "auth",
+      "api",
+      "authentication",
+      "login",
+      "logout",
+      "token"
+    ],
+    "last_modified": "2026-01-24T21:36:06.500Z"
+  }
+]

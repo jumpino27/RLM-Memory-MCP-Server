@@ -1,0 +1,49 @@
+[
+  {
+    "project_id": "test-with-gemini",
+    "user_prompt": "Index codebase at D:\\rlm_memory\\rlm-memory-mcp-server\\src",
+    "changes_summary": "Indexed 12 files from D:\\rlm_memory\\rlm-memory-mcp-server\\src. File types: .ts",
+    "files_modified": [
+      "constants.ts",
+      "index.ts",
+      "schemas/index.ts",
+      "services/database.ts",
+      "services/gemini.ts",
+      "tools/create-memory.ts",
+      "tools/find-files.ts",
+      "tools/index-codebase.ts",
+      "tools/init-status.ts",
+      "tools/recall-memory.ts",
+      "types.ts",
+      "ui/server.ts"
+    ],
+    "keywords": [
+      "index",
+      "codebase",
+      "scan",
+      "filemap",
+      "initialization"
+    ],
+    "id": "mem_46e763c4",
+    "timestamp": "2026-01-24T21:35:45.243Z"
+  },
+  {
+    "project_id": "test-with-gemini",
+    "user_prompt": "Add JWT authentication with refresh tokens",
+    "changes_summary": "Implemented JWT auth system with login, logout, and token refresh endpoints. Added middleware for route protection.",
+    "files_modified": [
+      "src/auth/jwt.ts",
+      "src/middleware/auth.ts",
+      "src/routes/auth.ts"
+    ],
+    "keywords": [
+      "jwt",
+      "authentication",
+      "token",
+      "security",
+      "login"
+    ],
+    "id": "mem_df32fe9e",
+    "timestamp": "2026-01-24T21:35:45.250Z"
+  }
+]

@@ -1,0 +1,152 @@
+/**
+ * Zod schemas for tool input validation
+ */
+
+import { z } from "zod";
+import { ResponseFormat } from "../types.js";
+
+/**
+ * Schema for recall_memory tool
+ */
+export const RecallMemoryInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to recall memories from"),
+  keywords: z.array(z.string())
+    .min(1, "At least one keyword is required")
+    .max(20, "Maximum 20 keywords allowed")
+    .describe("Keywords to search for in project memory (extracted from user prompt)"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .describe("Maximum number of memories to return (default: 10)"),
+  response_format: z.nativeEnum(ResponseFormat)
+    .default(ResponseFormat.JSON)
+    .describe("Output format: 'json' for structured data or 'markdown' for human-readable")
+}).strict();
+
+export type RecallMemoryInput = z.infer<typeof RecallMemoryInputSchema>;
+
+/**
+ * Schema for find_files_by_intent tool
+ */
+export const FindFilesByIntentInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to search files in"),
+  user_prompt: z.string()
+    .min(3, "Prompt must be at least 3 characters")
+    .max(1000, "Prompt must not exceed 1000 characters")
+    .describe("Natural language description of what you're looking for (e.g., 'I need to fix the submit button color')"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .describe("Maximum number of files to return (default: 10)"),
+  response_format: z.nativeEnum(ResponseFormat)
+    .default(ResponseFormat.JSON)
+    .describe("Output format: 'json' for structured data or 'markdown' for human-readable")
+}).strict();
+
+export type FindFilesByIntentInput = z.infer<typeof FindFilesByIntentInputSchema>;
+
+/**
+ * Schema for create_memory tool
+ */
+export const CreateMemoryInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to create memory for"),
+  user_prompt: z.string()
+    .min(1, "User prompt is required")
+    .max(2000, "User prompt must not exceed 2000 characters")
+    .describe("The original user request/prompt that led to these changes"),
+  changes_summary: z.string()
+    .min(1, "Changes summary is required")
+    .max(5000, "Changes summary must not exceed 5000 characters")
+    .describe("Technical summary of what was changed/implemented"),
+  files_modified: z.array(z.string())
+    .min(0)
+    .max(100)
+    .describe("List of file paths that were modified or created"),
+  keywords: z.array(z.string())
+    .max(20, "Maximum 20 keywords allowed")
+    .optional()
+    .describe("Optional keywords/tags for this memory. If not provided, they will be auto-extracted."),
+  file_descriptions: z.array(z.object({
+    path: z.string().describe("File path"),
+    description: z.string().describe("Brief description of what this file does")
+  }))
+    .optional()
+    .describe("Optional descriptions for modified files to update the file map")
+}).strict();
+
+export type CreateMemoryInput = z.infer<typeof CreateMemoryInputSchema>;
+
+/**
+ * Schema for rlm_init tool (initialize a new project)
+ */
+export const RLMInitInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to initialize (e.g., 'my-awesome-app')"),
+  working_directory: z.string()
+    .optional()
+    .describe("Optional - the actual working directory path where the project lives")
+}).strict();
+
+export type RLMInitInput = z.infer<typeof RLMInitInputSchema>;
+
+/**
+ * Schema for rlm_status tool (get project status)
+ */
+export const RLMStatusInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to get status for"),
+  response_format: z.nativeEnum(ResponseFormat)
+    .default(ResponseFormat.JSON)
+    .describe("Output format: 'json' for structured data or 'markdown' for human-readable")
+}).strict();
+
+export type RLMStatusInput = z.infer<typeof RLMStatusInputSchema>;
+
+/**
+ * Schema for rlm_index_codebase tool (scan and index existing codebase)
+ */
+export const RLMIndexCodebaseInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to index"),
+  directory_path: z.string()
+    .min(1, "Directory path is required")
+    .describe("Absolute path to the directory to scan (e.g., 'D:\\\\projects\\\\my-app')"),
+  file_patterns: z.array(z.string())
+    .optional()
+    .default(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py", "**/*.java", "**/*.go", "**/*.rs", "**/*.cpp", "**/*.c", "**/*.h", "**/*.cs", "**/*.rb", "**/*.php", "**/*.vue", "**/*.svelte"])
+    .describe("Glob patterns for files to include (default: common source files)"),
+  exclude_patterns: z.array(z.string())
+    .optional()
+    .default(["**/node_modules/**", "**/dist/**", "**/build/**", "**/.git/**", "**/vendor/**", "**/__pycache__/**", "**/target/**", "**/.next/**", "**/coverage/**"])
+    .describe("Glob patterns for files/folders to exclude"),
+  max_files: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(100)
+    .describe("Maximum number of files to index (default: 100, max: 500)"),
+  read_content: z.boolean()
+    .default(false)
+    .describe("Whether to read file content for better descriptions (slower but more accurate)")
+}).strict();
+
+export type RLMIndexCodebaseInput = z.infer<typeof RLMIndexCodebaseInputSchema>;
