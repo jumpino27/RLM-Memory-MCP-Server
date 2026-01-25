@@ -20,6 +20,7 @@ START TASK → rlm_recall_memory → rlm_find_files_by_intent → DO WORK → rl
 2. **Call `rlm_query` first** when starting a task to get relevant files and context
 3. **After indexing a codebase**, call `rlm_verify_index` to confirm everything is indexed
 4. **Use `rlm_find_files_by_intent`** instead of grep/find/ls for file discovery
+5. **When files are moved/deleted**, call `rlm_manage_sitemap` to keep the sitemap in sync
 
 ---
 
@@ -215,3 +216,72 @@ All tools have keyword-based fallbacks:
 - `rlm_find_files_by_intent`: Basic keyword search
 
 The system will still work, just with less intelligent matching.
+
+---
+
+## Sitemap Management
+
+### `rlm_manage_sitemap` (Keep Sitemap In Sync)
+
+Use this when files in the codebase are moved, deleted, or need metadata updates.
+
+**Actions:**
+- `delete`: Remove a file entry from the sitemap
+- `move`: Update a file's path (when renamed/moved)
+- `update`: Modify file metadata (description, keywords, component_type, feature_area)
+
+### Example: Files were deleted
+
+```json
+{
+  "tool": "rlm_manage_sitemap",
+  "project_name": "my-app",
+  "operations": [
+    { "action": "delete", "file_path": "src/deprecated/old-utils.ts" },
+    { "action": "delete", "file_path": "src/components/LegacyButton.tsx" }
+  ]
+}
+```
+
+### Example: File was moved/renamed
+
+```json
+{
+  "tool": "rlm_manage_sitemap",
+  "project_name": "my-app",
+  "operations": [
+    { "action": "move", "file_path": "src/utils.ts", "new_path": "src/lib/utils.ts" },
+    { "action": "move", "file_path": "src/Button.tsx", "new_path": "src/components/ui/Button.tsx" }
+  ]
+}
+```
+
+### Example: Update file metadata
+
+```json
+{
+  "tool": "rlm_manage_sitemap",
+  "project_name": "my-app",
+  "operations": [
+    {
+      "action": "update",
+      "file_path": "src/auth/login.ts",
+      "updates": {
+        "description": "Handles JWT-based authentication",
+        "keywords": ["jwt", "auth", "login", "token"],
+        "component_type": "service",
+        "feature_area": "security"
+      }
+    }
+  ]
+}
+```
+
+### When to Use
+
+- After deleting files from the codebase
+- After renaming or moving files
+- After refactoring that changes file purposes
+- When file metadata becomes outdated
+
+**Note:** You can combine multiple operations in a single call for efficiency.

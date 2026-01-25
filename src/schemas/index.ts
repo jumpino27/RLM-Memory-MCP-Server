@@ -230,3 +230,35 @@ export const RLMVerifyIndexInputSchema = z.object({
 }).strict();
 
 export type RLMVerifyIndexInput = z.infer<typeof RLMVerifyIndexInputSchema>;
+
+/**
+ * Schema for rlm_manage_sitemap tool (manage sitemap entries when files change)
+ */
+export const RLMManageSitemapInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project"),
+  operations: z.array(z.object({
+    action: z.enum(["delete", "move", "update"])
+      .describe("Action to perform: 'delete' removes entry, 'move' updates path, 'update' modifies metadata"),
+    file_path: z.string()
+      .describe("Current file path in the sitemap"),
+    new_path: z.string()
+      .optional()
+      .describe("New file path (required for 'move' action)"),
+    updates: z.object({
+      description: z.string().optional(),
+      keywords: z.array(z.string()).optional(),
+      component_type: z.string().optional(),
+      feature_area: z.string().optional()
+    })
+      .optional()
+      .describe("Metadata updates (for 'update' action)")
+  }))
+    .min(1, "At least one operation is required")
+    .max(100, "Maximum 100 operations per call")
+    .describe("List of operations to perform on sitemap entries")
+}).strict();
+
+export type RLMManageSitemapInput = z.infer<typeof RLMManageSitemapInputSchema>;

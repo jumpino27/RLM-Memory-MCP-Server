@@ -38,6 +38,7 @@ import { executeIndexCodebase } from "./tools/index-codebase.js";
 import { executeQuery } from "./tools/query.js";
 import { executeSmartMemory } from "./tools/smart-memory.js";
 import { executeVerifyIndex } from "./tools/verify-index.js";
+import { executeManageSitemap } from "./tools/manage-sitemap.js";
 
 // Import schemas
 import {
@@ -49,7 +50,8 @@ import {
   RLMIndexCodebaseInputSchema,
   RLMQueryInputSchema,
   RLMSmartMemoryInputSchema,
-  RLMVerifyIndexInputSchema
+  RLMVerifyIndexInputSchema,
+  RLMManageSitemapInputSchema
 } from "./schemas/index.js";
 
 // Create MCP server instance
@@ -382,6 +384,81 @@ Example:
     }
   },
   async (params) => executeVerifyIndex(params)
+);
+
+// Register rlm_manage_sitemap tool - Manage sitemap when files change
+server.registerTool(
+  "rlm_manage_sitemap",
+  {
+    title: "Manage Sitemap Entries",
+    description: `Manage sitemap entries when codebase files are moved, deleted, or updated.
+
+Use this tool when:
+- Files are DELETED from the codebase → remove them from sitemap
+- Files are MOVED/RENAMED → update their paths in sitemap
+- File metadata needs updating → change description, keywords, component_type, or feature_area
+
+Args:
+  - project_name (string): Name of the project
+  - operations (array): List of operations to perform:
+    - action: "delete" | "move" | "update"
+    - file_path: Current path in sitemap
+    - new_path: New path (required for "move")
+    - updates: { description?, keywords?, component_type?, feature_area? } (for "update")
+
+Examples:
+
+Delete files that no longer exist:
+{
+  "project_name": "my-app",
+  "operations": [
+    { "action": "delete", "file_path": "src/old-component.tsx" },
+    { "action": "delete", "file_path": "src/deprecated/utils.ts" }
+  ]
+}
+
+Move/rename files:
+{
+  "project_name": "my-app",
+  "operations": [
+    { "action": "move", "file_path": "src/Button.tsx", "new_path": "src/components/Button.tsx" }
+  ]
+}
+
+Update file metadata:
+{
+  "project_name": "my-app",
+  "operations": [
+    {
+      "action": "update",
+      "file_path": "src/auth/login.ts",
+      "updates": {
+        "description": "Handles user authentication with JWT",
+        "feature_area": "auth",
+        "component_type": "service"
+      }
+    }
+  ]
+}
+
+Mixed operations:
+{
+  "project_name": "my-app",
+  "operations": [
+    { "action": "delete", "file_path": "src/legacy.ts" },
+    { "action": "move", "file_path": "src/utils.ts", "new_path": "src/lib/utils.ts" },
+    { "action": "update", "file_path": "src/api.ts", "updates": { "keywords": ["api", "rest", "http"] } }
+  ]
+}`,
+    inputSchema: RLMManageSitemapInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => executeManageSitemap(params)
 );
 
 /**

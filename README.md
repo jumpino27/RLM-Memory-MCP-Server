@@ -156,6 +156,12 @@ Add to `~/.gemini/mcp.json`:
 | `rlm_smart_memory` | **RECOMMENDED** - Create memory with rich metadata |
 | `rlm_create_memory` | Basic memory creation (legacy) |
 
+### Sitemap Management Tools
+
+| Tool | Purpose |
+|------|---------|
+| `rlm_manage_sitemap` | Delete, move, or update file entries when codebase changes |
+
 ---
 
 ## New Tools (v2.0)
@@ -224,6 +230,39 @@ After indexing a codebase, this tool asks: **"Is this everything? Are you sure?"
 - Files indexed grouped by type and feature area
 - Potential gaps detected (e.g., "No test files found")
 - Confirmation prompt for the AI agent
+
+### 4. `rlm_manage_sitemap` - Sitemap Management
+
+**Keep your sitemap in sync when the codebase changes.**
+
+AI agents can use this tool to:
+- **Delete** entries for files that no longer exist
+- **Move** entries when files are renamed/moved
+- **Update** metadata (description, keywords, component_type, feature_area)
+
+```json
+{
+  "project_name": "my-app",
+  "operations": [
+    { "action": "delete", "file_path": "src/old-component.tsx" },
+    { "action": "move", "file_path": "src/Button.tsx", "new_path": "src/ui/Button.tsx" },
+    {
+      "action": "update",
+      "file_path": "src/api/auth.ts",
+      "updates": {
+        "description": "JWT authentication service",
+        "keywords": ["jwt", "auth", "token"],
+        "feature_area": "security"
+      }
+    }
+  ]
+}
+```
+
+**Returns:**
+- Summary of successful/failed operations
+- Detailed results for each operation
+- Current sitemap entry count
 
 ---
 
