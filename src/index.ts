@@ -35,6 +35,9 @@ import { executeFindFiles } from "./tools/find-files.js";
 import { executeCreateMemory } from "./tools/create-memory.js";
 import { executeInit, executeStatus, executeListProjects } from "./tools/init-status.js";
 import { executeIndexCodebase } from "./tools/index-codebase.js";
+import { executeQuery } from "./tools/query.js";
+import { executeSmartMemory } from "./tools/smart-memory.js";
+import { executeVerifyIndex } from "./tools/verify-index.js";
 
 // Import schemas
 import {
@@ -43,7 +46,10 @@ import {
   CreateMemoryInputSchema,
   RLMInitInputSchema,
   RLMStatusInputSchema,
-  RLMIndexCodebaseInputSchema
+  RLMIndexCodebaseInputSchema,
+  RLMQueryInputSchema,
+  RLMSmartMemoryInputSchema,
+  RLMVerifyIndexInputSchema
 } from "./schemas/index.js";
 
 // Create MCP server instance
@@ -249,6 +255,133 @@ Example:
     }
   },
   async (params) => executeIndexCodebase(params)
+);
+
+// Register rlm_query tool - Key tool for AI agent ↔ MCP communication
+server.registerTool(
+  "rlm_query",
+  {
+    title: "Query Project for Relevant Files",
+    description: `**PRIMARY TOOL** - Ask the MCP about relevant files for a user's request.
+
+This is the main tool for AI agent ↔ MCP bi-directional communication.
+Call this FIRST when starting any task to understand what files are relevant.
+
+Args:
+  - project_name (string): Name of the project
+  - user_request (string): Description of what the user wants (e.g., "The user wants to change the submit button color")
+  - include_memories (boolean): Include relevant past memories (default: true)
+  - include_suggestions (boolean): Include AI suggestions for the task (default: true)
+  - max_files (number): Max relevant files to return (default: 10)
+
+Returns:
+  - relevant_files: List of files with descriptions, recent changes, and why they're relevant
+  - relevant_memories: Past work related to this request
+  - ai_analysis: Explanation of how to approach the task
+  - suggestions: Tips for the AI agent
+
+Example:
+{
+  "project_name": "my-app",
+  "user_request": "The user wants to fix the login form validation"
+}`,
+    inputSchema: RLMQueryInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => executeQuery(params)
+);
+
+// Register rlm_smart_memory tool - Enhanced memory creation
+server.registerTool(
+  "rlm_smart_memory",
+  {
+    title: "Create Smart Memory Entry",
+    description: `**RECOMMENDED** - Create a memory entry with rich metadata.
+
+Use this instead of rlm_create_memory for better keyword extraction and file tracking.
+Provide detailed change context and the MCP's Gemini will:
+- Extract optimal keywords for future semantic search
+- Classify files by component type and feature area
+- Track edit history for each file
+- Update the site map with new features
+
+Args:
+  - project_name (string): Name of the project
+  - user_prompt (string): Original user request
+  - changes_context (string): Detailed description of changes (e.g., "Modified the submit button in LoginForm.tsx to use primary color from theme. Added onClick validation.")
+  - files_modified (array): Files changed with details:
+    - path (string): File path
+    - change_type ("created" | "modified" | "deleted"): Type of change
+    - change_summary (string): What changed in this file
+  - new_features (array): Optional - new features/components added
+  - affected_areas (array): Optional - feature areas affected (e.g., ["auth", "ui"])
+
+Example:
+{
+  "project_name": "my-app",
+  "user_prompt": "Fix the submit button color",
+  "changes_context": "Changed the submit button in LoginForm to use the primary theme color instead of hardcoded blue. Also added hover state.",
+  "files_modified": [
+    {
+      "path": "src/components/LoginForm.tsx",
+      "change_type": "modified",
+      "change_summary": "Updated button color to use theme.primary"
+    }
+  ],
+  "affected_areas": ["auth", "ui"]
+}`,
+    inputSchema: RLMSmartMemoryInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => executeSmartMemory(params)
+);
+
+// Register rlm_verify_index tool - Verify what was indexed
+server.registerTool(
+  "rlm_verify_index",
+  {
+    title: "Verify Indexed Files",
+    description: `Verify what files have been indexed and check for gaps.
+
+Call this AFTER rlm_index_codebase to confirm the indexing is complete.
+The MCP will analyze what was indexed and ask: "Is this everything?"
+
+Args:
+  - project_name (string): Name of the project to verify
+  - expected_features (array): Optional - features you expect to find (e.g., ["auth", "checkout"])
+  - report_format ("summary" | "detailed"): Output format (default: "summary")
+
+Returns:
+  - files_indexed: Number of files indexed
+  - files_by_extension: Breakdown by file type
+  - feature_areas: Identified feature areas
+  - potential_gaps: Things that might be missing
+  - confirmation_prompt: Message for the AI agent to confirm
+
+Example:
+{
+  "project_name": "my-app",
+  "expected_features": ["authentication", "payment", "dashboard"]
+}`,
+    inputSchema: RLMVerifyIndexInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => executeVerifyIndex(params)
 );
 
 /**

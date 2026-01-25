@@ -209,32 +209,120 @@ function generateDescriptionFromPath(filePath: string): string {
 }
 
 /**
- * Generate description using Gemini AI
+ * Infer component type from file path
+ */
+function inferComponentType(filePath: string): string {
+  const lowerPath = filePath.toLowerCase();
+
+  if (lowerPath.includes("button")) return "button";
+  if (lowerPath.includes("form")) return "form";
+  if (lowerPath.includes("modal") || lowerPath.includes("dialog")) return "modal";
+  if (lowerPath.includes("hook") || lowerPath.includes("/use")) return "hook";
+  if (lowerPath.includes("service")) return "service";
+  if (lowerPath.includes("api") || lowerPath.includes("endpoint")) return "api-endpoint";
+  if (lowerPath.includes("util") || lowerPath.includes("helper")) return "utility";
+  if (lowerPath.includes("config") || lowerPath.includes("constant")) return "config";
+  if (lowerPath.includes("context") || lowerPath.includes("provider")) return "context";
+  if (lowerPath.includes("store") || lowerPath.includes("slice")) return "state";
+  if (lowerPath.includes("component")) return "component";
+  if (lowerPath.includes("page") || lowerPath.includes("view")) return "page";
+  if (lowerPath.includes("layout")) return "layout";
+  if (lowerPath.includes("test") || lowerPath.includes("spec")) return "test";
+  if (lowerPath.includes("route") || lowerPath.includes("router")) return "router";
+  if (lowerPath.includes("middleware")) return "middleware";
+  if (lowerPath.includes("controller")) return "controller";
+  if (lowerPath.includes("model") || lowerPath.includes("schema")) return "model";
+
+  return "unknown";
+}
+
+/**
+ * Infer feature area from file path
+ */
+function inferFeatureArea(filePath: string): string {
+  const lowerPath = filePath.toLowerCase();
+
+  if (lowerPath.includes("auth") || lowerPath.includes("login") || lowerPath.includes("signup")) return "auth";
+  if (lowerPath.includes("checkout") || lowerPath.includes("cart") || lowerPath.includes("payment")) return "checkout";
+  if (lowerPath.includes("dashboard")) return "dashboard";
+  if (lowerPath.includes("profile") || lowerPath.includes("account")) return "user-profile";
+  if (lowerPath.includes("setting")) return "settings";
+  if (lowerPath.includes("admin")) return "admin";
+  if (lowerPath.includes("api")) return "api";
+  if (lowerPath.includes("shared") || lowerPath.includes("common")) return "shared";
+  if (lowerPath.includes("nav") || lowerPath.includes("header") || lowerPath.includes("footer")) return "navigation";
+  if (lowerPath.includes("user")) return "user";
+  if (lowerPath.includes("product")) return "product";
+  if (lowerPath.includes("order")) return "order";
+  if (lowerPath.includes("notification")) return "notifications";
+  if (lowerPath.includes("message") || lowerPath.includes("chat")) return "messaging";
+  if (lowerPath.includes("search")) return "search";
+
+  // Try to extract from directory structure
+  const parts = filePath.split(/[/\\]/);
+  for (const part of parts) {
+    if (part && !["src", "app", "components", "pages", "lib", "utils", "index"].includes(part.toLowerCase())) {
+      const cleaned = part.toLowerCase().replace(/[^a-z0-9]/g, "-");
+      if (cleaned.length > 2 && cleaned.length < 20) {
+        return cleaned;
+      }
+    }
+  }
+
+  return "general";
+}
+
+/**
+ * Generate description using Gemini AI with component type and feature area
  */
 async function generateDescriptionWithAI(
   filePath: string,
   content?: string
-): Promise<string> {
+): Promise<{ description: string; component_type: string; feature_area: string }> {
   const prompt = content
-    ? `Analyze this source file and provide a brief 1-2 sentence description of its purpose and main functionality.
+    ? `Analyze this source file and extract metadata for codebase indexing.
 
 File: ${filePath}
 Content (first 2000 chars):
 ${content.slice(0, 2000)}
 
-Return ONLY the description, no formatting or explanations.`
-    : `Based on this file path, provide a brief 1-2 sentence description of what this file likely does.
+Return ONLY a JSON object with this structure:
+{
+  "description": "Brief 1-2 sentence description of purpose and functionality",
+  "component_type": "type of component (e.g., 'button', 'form', 'api-endpoint', 'service', 'hook', 'util', 'config', 'page', 'modal', 'layout')",
+  "feature_area": "business feature area (e.g., 'auth', 'checkout', 'dashboard', 'user-profile', 'settings', 'navigation')"
+}`
+    : `Based on this file path, extract metadata for codebase indexing.
 
 File: ${filePath}
 
-Return ONLY the description, no formatting or explanations.`;
+Return ONLY a JSON object with this structure:
+{
+  "description": "Brief 1-2 sentence description of what this file likely does",
+  "component_type": "type of component (e.g., 'button', 'form', 'api-endpoint', 'service', 'hook', 'util', 'config', 'page')",
+  "feature_area": "business feature area (e.g., 'auth', 'checkout', 'dashboard', 'user-profile', 'settings')"
+}`;
 
   try {
     const response = await generateContent(prompt);
-    return response.trim().slice(0, 500); // Limit description length
+    const match = response.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return {
+        description: parsed.description?.slice(0, 500) || generateDescriptionFromPath(filePath),
+        component_type: parsed.component_type || inferComponentType(filePath),
+        feature_area: parsed.feature_area || inferFeatureArea(filePath)
+      };
+    }
   } catch {
-    return generateDescriptionFromPath(filePath);
+    // Fallback
   }
+
+  return {
+    description: generateDescriptionFromPath(filePath),
+    component_type: inferComponentType(filePath),
+    feature_area: inferFeatureArea(filePath)
+  };
 }
 
 /**
@@ -405,6 +493,8 @@ export async function executeIndexCodebase(
     path: string;
     description: string;
     keywords: string[];
+    component_type?: string;
+    feature_area?: string;
   }> = [];
 
   const errors: string[] = [];
@@ -431,26 +521,37 @@ export async function executeIndexCodebase(
             }
           }
 
-          // Generate description
-          const description = params.read_content && content
+          // Generate description with component type and feature area
+          const metadata = params.read_content && content
             ? await generateDescriptionWithAI(relativePath, content)
             : await generateDescriptionWithAI(relativePath);
 
           // Extract keywords
           const pathKeywords = extractKeywordsFromPath(relativePath);
-          const descKeywords = description
+          const descKeywords = metadata.description
             .toLowerCase()
             .split(/[\W_]+/)
             .filter(w => w.length > 2 && !STOP_WORDS.has(w));
 
-          const keywords = [...new Set([...pathKeywords, ...descKeywords])].slice(0, 7);
+          // Add component type and feature area to keywords for better search
+          const typeKeywords = metadata.component_type ? [metadata.component_type.toLowerCase()] : [];
+          const areaKeywords = metadata.feature_area ? [metadata.feature_area.toLowerCase()] : [];
+
+          const keywords = [...new Set([
+            ...pathKeywords,
+            ...descKeywords,
+            ...typeKeywords,
+            ...areaKeywords
+          ])].slice(0, 10);
 
           processedCount++;
 
           return {
             path: relativePath,
-            description,
-            keywords
+            description: metadata.description,
+            keywords,
+            component_type: metadata.component_type,
+            feature_area: metadata.feature_area
           };
         } catch (error) {
           errors.push(`Failed to process ${relativePath}: ${error}`);
@@ -484,6 +585,26 @@ export async function executeIndexCodebase(
     keywords: ["index", "codebase", "scan", "filemap", "initialization"]
   });
 
+  // Group files by type and area for verification
+  const byComponentType: Record<string, number> = {};
+  const byFeatureArea: Record<string, number> = {};
+  const byExtension: Record<string, number> = {};
+
+  for (const entry of fileEntries) {
+    const ext = entry.path.split(".").pop() || "unknown";
+    byExtension[ext] = (byExtension[ext] || 0) + 1;
+
+    if (entry.component_type) {
+      byComponentType[entry.component_type] = (byComponentType[entry.component_type] || 0) + 1;
+    }
+    if (entry.feature_area) {
+      byFeatureArea[entry.feature_area] = (byFeatureArea[entry.feature_area] || 0) + 1;
+    }
+  }
+
+  // Generate verification prompt
+  const verificationPrompt = `Indexed ${fileEntries.length} files. Component types: ${Object.keys(byComponentType).join(", ") || "none classified"}. Feature areas: ${Object.keys(byFeatureArea).join(", ") || "none classified"}. Please verify by calling rlm_verify_index to confirm everything is indexed correctly.`;
+
   return {
     content: [{
       type: "text",
@@ -494,13 +615,21 @@ export async function executeIndexCodebase(
         files_scanned: files.length,
         files_indexed: fileEntries.length,
         memory_id: memory.id,
+        files_by_extension: byExtension,
+        files_by_component_type: byComponentType,
+        files_by_feature_area: byFeatureArea,
         errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
         success: true,
         sample_files: fileEntries.slice(0, 5).map(f => ({
           path: f.path,
           description: f.description.slice(0, 100) + (f.description.length > 100 ? "..." : ""),
-          keywords: f.keywords
-        }))
+          keywords: f.keywords,
+          component_type: f.component_type,
+          feature_area: f.feature_area
+        })),
+        _verification_required: true,
+        _next_step: "Call rlm_verify_index to confirm the indexing is complete and check for any gaps.",
+        _verification_prompt: verificationPrompt
       }, null, 2)
     }]
   };

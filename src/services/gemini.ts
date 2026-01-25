@@ -129,35 +129,63 @@ Text: ${text}`;
 }
 
 /**
- * Match user intent to files using Gemini
+ * Enhanced file data for semantic matching
+ */
+interface EnhancedFileData {
+  path: string;
+  description: string;
+  keywords: string[];
+  component_type?: string;
+  feature_area?: string;
+  edit_history?: Array<{ date: string; summary: string }>;
+}
+
+/**
+ * Match user intent to files using Gemini with enhanced semantic search
+ * Now considers component type, feature area, and edit history
  */
 export async function matchFilesToIntent(
   intent: string,
-  files: Array<{ path: string; description: string; keywords: string[] }>
+  files: Array<EnhancedFileData>
 ): Promise<{ files: string[]; reasoning: string }> {
   if (files.length === 0) {
     return { files: [], reasoning: "No files in the project map yet." };
   }
 
+  // Build rich file context including edit history
   const filesText = files
-    .map(f => `- ${f.path}: ${f.description} [${f.keywords.join(", ")}]`)
-    .join("\n");
+    .map(f => {
+      const keywords = f.keywords || [];
+      const history = f.edit_history?.slice(-2).map(e => `    • ${e.summary || "unknown"}`).join("\n") || "";
+      return `- ${f.path}
+    Description: ${f.description || "No description"}
+    Type: ${f.component_type || "unknown"} | Area: ${f.feature_area || "general"}
+    Keywords: [${keywords.join(", ") || "none"}]
+    ${history ? `Recent edits:\n${history}` : ""}`;
+    })
+    .join("\n\n");
 
   const prompt = `You are an AI assistant helping to find relevant files in a codebase.
 Given the user's intent and a list of files with descriptions, return the most relevant file paths.
 
-User Intent: ${intent}
+User Intent: "${intent}"
 
 Available Files:
 ${filesText}
 
+IMPORTANT RULES FOR SELECTION:
+1. Be SPECIFIC - if the user mentions "the submit button", find THAT specific button, not all buttons
+2. Use component_type and feature_area to narrow down - don't return all UI components
+3. Consider edit history - files recently edited for similar tasks are more relevant
+4. Prioritize exact matches over partial matches
+5. Return files in order of relevance (most relevant first)
+6. Maximum 5-7 files unless the task clearly requires more
+
 Return ONLY a JSON object with this structure:
 {
   "files": ["path1", "path2"],
-  "reasoning": "Brief explanation of why these files match"
-}
-
-Select files that best match the user's intent. Be precise and only include truly relevant files.`;
+  "reasoning": "Brief explanation of why these specific files were selected"
+}`;
 
   try {
     const response = await generateContent(prompt);
@@ -169,17 +197,76 @@ Select files that best match the user's intent. Be precise and only include trul
     }
     return { files: [], reasoning: "Could not parse AI response" };
   } catch (error) {
-    // Fallback: simple keyword matching
-    const intentWords = intent.toLowerCase().split(/\W+/).filter(w => w.length > 2);
-    const matchedFiles = files.filter(f => {
-      const fileText = `${f.path} ${f.description} ${f.keywords.join(" ")}`.toLowerCase();
-      return intentWords.some(word => fileText.includes(word));
-    });
-    return {
-      files: matchedFiles.map(f => f.path),
-      reasoning: "Matched using keyword fallback (AI unavailable)"
-    };
+    // Fallback: smart keyword matching with type/area consideration
+    return smartKeywordMatch(intent, files);
   }
+}
+
+/**
+ * Smart keyword matching fallback with component type and feature area consideration
+ */
+function smartKeywordMatch(
+  intent: string,
+  files: Array<EnhancedFileData>
+): { files: string[]; reasoning: string } {
+  const intentWords = intent.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+
+  // Score each file
+  const scored = files.map(file => {
+    let score = 0;
+    const keywords = file.keywords || [];
+    const fileText = `${file.path} ${file.description || ""} ${keywords.join(" ")}`.toLowerCase();
+
+    // Base score from keyword matches
+    for (const word of intentWords) {
+      if (fileText.includes(word)) score += 1;
+      // Boost if word appears in path (more specific)
+      if (file.path.toLowerCase().includes(word)) score += 2;
+    }
+
+    // Boost for component type match
+    if (file.component_type) {
+      const typeWords = file.component_type.toLowerCase().split("-");
+      for (const word of intentWords) {
+        if (typeWords.some(tw => tw.includes(word) || word.includes(tw))) {
+          score += 3;
+        }
+      }
+    }
+
+    // Boost for feature area match
+    if (file.feature_area) {
+      const areaWords = file.feature_area.toLowerCase().split("-");
+      for (const word of intentWords) {
+        if (areaWords.some(aw => aw.includes(word) || word.includes(aw))) {
+          score += 3;
+        }
+      }
+    }
+
+    // Boost for recent edits (more active files)
+    if (file.edit_history && file.edit_history.length > 0) {
+      score += 1;
+      // Check if recent edits are related
+      const recentEdits = file.edit_history.slice(-3).map(e => (e.summary || "").toLowerCase()).join(" ");
+      for (const word of intentWords) {
+        if (recentEdits.includes(word)) score += 2;
+      }
+    }
+
+    return { file, score };
+  });
+
+  // Sort by score and return top matches
+  const topMatches = scored
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 7);
+
+  return {
+    files: topMatches.map(m => m.file.path),
+    reasoning: `Matched using keyword analysis with component type and feature area weighting (AI unavailable). Top matches scored by: keyword presence, path specificity, type/area relevance, and recent edit history.`
+  };
 }
 
 /**

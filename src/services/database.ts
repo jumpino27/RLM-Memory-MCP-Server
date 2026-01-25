@@ -273,7 +273,7 @@ export async function searchMemories(
 }
 
 /**
- * Update or add file map entries
+ * Update or add file map entries (with optional component_type and feature_area)
  */
 export async function updateFileMap(
   projectName: string,
@@ -281,6 +281,8 @@ export async function updateFileMap(
     path: string;
     description: string;
     keywords: string[];
+    component_type?: string;
+    feature_area?: string;
   }>
 ): Promise<string[]> {
   const database = await loadDatabase(projectName);
@@ -294,10 +296,15 @@ export async function updateFileMap(
       path: file.path,
       description: file.description,
       keywords: file.keywords,
-      last_modified: now
+      last_modified: now,
+      component_type: file.component_type,
+      feature_area: file.feature_area
     };
 
     if (existingIndex >= 0) {
+      // Preserve edit history when updating
+      const existing = database.file_map[existingIndex];
+      entry.edit_history = existing.edit_history;
       database.file_map[existingIndex] = entry;
     } else {
       database.file_map.push(entry);
@@ -370,6 +377,44 @@ export function clearCache(projectName?: string): void {
   } else {
     databaseCache.clear();
   }
+}
+
+/**
+ * Delete a memory entry by ID
+ */
+export async function deleteMemory(
+  projectName: string,
+  memoryId: string
+): Promise<boolean> {
+  const database = await loadDatabase(projectName);
+  const index = database.memory_log.findIndex(m => m.id === memoryId);
+
+  if (index === -1) {
+    return false;
+  }
+
+  database.memory_log.splice(index, 1);
+  await saveMemoryLog(projectName, database.memory_log);
+  return true;
+}
+
+/**
+ * Delete a file from the file map by path
+ */
+export async function deleteFileFromMap(
+  projectName: string,
+  filePath: string
+): Promise<boolean> {
+  const database = await loadDatabase(projectName);
+  const index = database.file_map.findIndex(f => f.path === filePath);
+
+  if (index === -1) {
+    return false;
+  }
+
+  database.file_map.splice(index, 1);
+  await saveFileMap(projectName, database.file_map);
+  return true;
 }
 
 // Legacy compatibility - these functions now work with project names

@@ -150,3 +150,83 @@ export const RLMIndexCodebaseInputSchema = z.object({
 }).strict();
 
 export type RLMIndexCodebaseInput = z.infer<typeof RLMIndexCodebaseInputSchema>;
+
+/**
+ * Schema for rlm_query tool (AI agent asks about relevant files for a user request)
+ */
+export const RLMQueryInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to query"),
+  user_request: z.string()
+    .min(3, "User request description is required")
+    .max(2000, "User request must not exceed 2000 characters")
+    .describe("Description of what the user is asking for (e.g., 'The user wants to change the submit button color')"),
+  include_memories: z.boolean()
+    .default(true)
+    .describe("Whether to include relevant past memories in the response"),
+  include_suggestions: z.boolean()
+    .default(true)
+    .describe("Whether to include AI suggestions for the task"),
+  max_files: z.number()
+    .int()
+    .min(1)
+    .max(20)
+    .default(10)
+    .describe("Maximum number of relevant files to return")
+}).strict();
+
+export type RLMQueryInput = z.infer<typeof RLMQueryInputSchema>;
+
+/**
+ * Schema for rlm_smart_memory tool (enhanced memory creation with context)
+ */
+export const RLMSmartMemoryInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project"),
+  user_prompt: z.string()
+    .min(1, "User prompt is required")
+    .max(2000, "User prompt must not exceed 2000 characters")
+    .describe("The original user request"),
+  changes_context: z.string()
+    .min(1, "Changes context is required")
+    .max(5000, "Changes context must not exceed 5000 characters")
+    .describe("Detailed description of what was changed and why (e.g., 'Modified the submit button in LoginForm.tsx to use primary color from theme. Updated the onClick handler to include form validation.')"),
+  files_modified: z.array(z.object({
+    path: z.string().describe("File path"),
+    change_type: z.enum(["created", "modified", "deleted"]).describe("Type of change"),
+    change_summary: z.string().describe("Brief summary of changes to this file")
+  }))
+    .min(1, "At least one file must be specified")
+    .max(50)
+    .describe("List of files that were modified with details about each change"),
+  new_features: z.array(z.string())
+    .optional()
+    .describe("List of new features or components added to the codebase"),
+  affected_areas: z.array(z.string())
+    .optional()
+    .describe("Feature areas affected by this change (e.g., 'auth', 'checkout', 'ui')")
+}).strict();
+
+export type RLMSmartMemoryInput = z.infer<typeof RLMSmartMemoryInputSchema>;
+
+/**
+ * Schema for rlm_verify_index tool (verify and confirm what was indexed)
+ */
+export const RLMVerifyIndexInputSchema = z.object({
+  project_name: z.string()
+    .min(1, "Project name is required")
+    .max(100, "Project name must not exceed 100 characters")
+    .describe("Name of the project to verify"),
+  expected_features: z.array(z.string())
+    .optional()
+    .describe("Optional list of features/components the AI agent expects to find"),
+  report_format: z.enum(["summary", "detailed"])
+    .default("summary")
+    .describe("Format of the verification report")
+}).strict();
+
+export type RLMVerifyIndexInput = z.infer<typeof RLMVerifyIndexInputSchema>;

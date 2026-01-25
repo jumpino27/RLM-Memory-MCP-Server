@@ -46,12 +46,13 @@ function formatMarkdown(result: FindFilesResult): string {
   for (const file of result.files) {
     lines.push(`### \`${file.path}\``);
     lines.push("");
-    lines.push(`${file.description}`);
+    lines.push(`${file.description || "No description"}`);
     lines.push("");
-    if (file.keywords.length > 0) {
-      lines.push(`**Keywords:** ${file.keywords.join(", ")}`);
+    const keywords = file.keywords || [];
+    if (keywords.length > 0) {
+      lines.push(`**Keywords:** ${keywords.join(", ")}`);
     }
-    lines.push(`**Last Modified:** ${new Date(file.last_modified).toLocaleDateString()}`);
+    lines.push(`**Last Modified:** ${file.last_modified ? new Date(file.last_modified).toLocaleDateString() : "unknown"}`);
     lines.push("");
   }
 
@@ -100,13 +101,16 @@ export async function executeFindFiles(
     };
   }
 
-  // Use Gemini to match intent to files
+  // Use Gemini to match intent to files with enhanced data
   const aiResult = await matchFilesToIntent(
     params.user_prompt,
     fileMap.map(f => ({
       path: f.path,
-      description: f.description,
-      keywords: f.keywords
+      description: f.description || "",
+      keywords: f.keywords || [],
+      component_type: f.component_type,
+      feature_area: f.feature_area,
+      edit_history: f.edit_history
     }))
   );
 

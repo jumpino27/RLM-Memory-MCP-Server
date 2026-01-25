@@ -28,3 +28,10 @@ coverage/
 
 # RLM data (can be committed or ignored per preference)
 # .rlm/
+
+# Project data - user memories (ignore personal projects)
+# projects/
+
+# Personal project data - DO NOT PUSH TO GITHUB
+# Contains personal website memory data
+projects/jumpino_tech/

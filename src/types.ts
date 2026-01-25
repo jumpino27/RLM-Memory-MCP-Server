@@ -14,12 +14,22 @@ export interface MemoryEntry {
   embedding?: number[]; // For future vector search
 }
 
+// Edit history entry - tracks changes to a file over time
+export interface EditHistoryEntry {
+  date: string;
+  summary: string;
+  memory_id?: string;
+}
+
 // File map entry - maps file paths to their descriptions
 export interface FileMapEntry {
   path: string;
   description: string;
   last_modified: string;
   keywords: string[];
+  edit_history?: EditHistoryEntry[];
+  component_type?: string; // e.g., "button", "modal", "form", "api", "service"
+  feature_area?: string;   // e.g., "auth", "checkout", "dashboard"
 }
 
 // Project configuration
@@ -75,6 +85,36 @@ export interface CreateMemoryResult {
   timestamp: string;
   files_updated_in_map: string[];
   success: boolean;
+}
+
+// Query result - response to AI agent asking about relevant files
+export interface QueryResult {
+  relevant_files: Array<{
+    path: string;
+    description: string;
+    relevance_reason: string;
+    last_modified: string;
+    recent_changes?: string[];
+    component_type?: string;
+    feature_area?: string;
+  }>;
+  relevant_memories: Array<{
+    id: string;
+    summary: string;
+    date: string;
+    files: string[];
+  }>;
+  ai_analysis: string;
+  suggestions?: string[];
+}
+
+// Index verification result
+export interface IndexVerificationResult {
+  files_indexed: number;
+  files_by_type: Record<string, number>;
+  files_by_feature: Record<string, string[]>;
+  potential_missing: string[];
+  confirmation_prompt: string;
 }
 
 // UI types

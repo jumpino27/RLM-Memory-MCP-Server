@@ -59,7 +59,10 @@ function formatMarkdown(result: RecallMemoryResult): string {
       lines.push("");
     }
 
-    lines.push(`**Tags:** ${memory.keywords.join(", ")}`);
+    const keywords = memory.keywords || [];
+    if (keywords.length > 0) {
+      lines.push(`**Tags:** ${keywords.join(", ")}`);
+    }
     lines.push("");
     lines.push("---");
     lines.push("");
