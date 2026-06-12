@@ -2,26 +2,36 @@
  * rlm_smart_memory tool implementation
  *
  * Enhanced memory creation with better context understanding.
- * The AI agent provides detailed change context, and Gemini generates:
+ * The AI agent provides detailed change context, and the LLM generates:
  * - Better keywords for semantic search
  * - Component type and feature area classification
  * - Edit history tracking
+ *
+ * The agent's full changes_context is ALWAYS persisted verbatim
+ * (full_context) — the LLM summary is a convenience, never the only record.
  */
 
 import { type RLMSmartMemoryInput } from "../schemas/index.js";
 import {
-  loadDatabase,
+  addMemory,
+  updateFileMap,
+  deleteFileFromMap,
   projectExists,
   updateLastAccessed,
-  saveMemoryLog,
-  saveFileMap
+  normalizeFilePath
 } from "../services/database.js";
-import { generateContent } from "../services/gemini.js";
-import { v4 as uuidv4 } from "uuid";
-import type { MemoryEntry, FileMapEntry, EditHistoryEntry } from "../types.js";
+import { generateJSON, extractKeywordsFallback, isLLMAvailable } from "../services/llm.js";
+import type { ToolResult } from "../types.js";
+
+interface FileMetadata {
+  description: string;
+  component_type: string;
+  feature_area: string;
+  keywords: string[];
+}
 
 /**
- * Use Gemini to extract rich metadata from change context
+ * Use the LLM to extract rich metadata from change context
  */
 async function extractRichMetadata(
   userPrompt: string,
@@ -29,13 +39,9 @@ async function extractRichMetadata(
   filesModified: Array<{ path: string; change_type: string; change_summary: string }>
 ): Promise<{
   keywords: string[];
-  fileMetadata: Record<string, {
-    description: string;
-    component_type: string;
-    feature_area: string;
-    keywords: string[];
-  }>;
+  fileMetadata: Map<string, FileMetadata>;
   memorySummary: string;
+  usedFallback: boolean;
 }> {
   const filesList = filesModified.map(f =>
     `- ${f.path} (${f.change_type}): ${f.change_summary}`
@@ -52,7 +58,8 @@ ${filesList}
 
 Based on this information, extract:
 1. Keywords for semantic search (technical terms, features, concepts)
-2. For each file, determine:
+2. A concise summary of what was accomplished
+3. For each file listed above:
    - Brief description of what it does
    - Component type (e.g., "button", "form", "modal", "api-endpoint", "service", "hook", "util", "config")
    - Feature area (e.g., "auth", "checkout", "dashboard", "user-profile", "settings")
@@ -62,57 +69,116 @@ Return ONLY a JSON object with this exact structure:
 {
   "keywords": ["keyword1", "keyword2", "keyword3"],
   "memory_summary": "Concise summary of what was accomplished",
-  "files": {
-    "path/to/file.ts": {
+  "files": [
+    {
+      "path": "path/to/file.ts",
       "description": "Brief description",
       "component_type": "type",
       "feature_area": "area",
       "keywords": ["kw1", "kw2"]
     }
-  }
+  ]
 }
 
 IMPORTANT:
+- Use the exact file paths from the FILES MODIFIED list
 - Keywords should be specific and useful for future search
 - Avoid generic words like "file", "code", "function", "this", "that"
 - Component types should be specific: "submit-button" is better than "button"
 - Feature areas should reflect the business domain`;
 
-  try {
-    const response = await generateContent(prompt);
-    const match = response.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]);
-      return {
-        keywords: parsed.keywords || [],
-        fileMetadata: parsed.files || {},
-        memorySummary: parsed.memory_summary || changesContext.slice(0, 200)
-      };
+  if (isLLMAvailable()) {
+    try {
+      const parsed = await generateJSON<{
+        keywords?: unknown;
+        memory_summary?: unknown;
+        files?: unknown;
+      }>(prompt, {
+        schema: {
+          type: "object",
+          properties: {
+            keywords: { type: "array", items: { type: "string" } },
+            memory_summary: { type: "string" },
+            files: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string" },
+                  description: { type: "string" },
+                  component_type: { type: "string" },
+                  feature_area: { type: "string" },
+                  keywords: { type: "array", items: { type: "string" } }
+                },
+                required: ["path", "description", "component_type", "feature_area", "keywords"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["keywords", "memory_summary", "files"],
+          additionalProperties: false
+        },
+        schemaName: "change_metadata"
+      });
+
+      if (parsed) {
+        // Shape-validate everything coming back from the model
+        const keywords = Array.isArray(parsed.keywords)
+          ? parsed.keywords.filter((k): k is string => typeof k === "string")
+          : [];
+        const memorySummary =
+          typeof parsed.memory_summary === "string" && parsed.memory_summary.trim()
+            ? parsed.memory_summary
+            : changesContext;
+
+        // Key file metadata by NORMALIZED path so model formatting drift
+        // (backslashes, ./ prefixes, case) still matches the agent's paths
+        const fileMetadata = new Map<string, FileMetadata>();
+        if (Array.isArray(parsed.files)) {
+          for (const f of parsed.files) {
+            if (!f || typeof f !== "object") continue;
+            const entry = f as Record<string, unknown>;
+            if (typeof entry.path !== "string") continue;
+            fileMetadata.set(normalizeFilePath(entry.path).toLowerCase(), {
+              description: typeof entry.description === "string" ? entry.description : "",
+              component_type: typeof entry.component_type === "string" ? entry.component_type : "",
+              feature_area: typeof entry.feature_area === "string" ? entry.feature_area : "",
+              keywords: Array.isArray(entry.keywords)
+                ? entry.keywords.filter((k): k is string => typeof k === "string")
+                : []
+            });
+          }
+        }
+
+        if (keywords.length > 0 || fileMetadata.size > 0) {
+          return { keywords, fileMetadata, memorySummary, usedFallback: false };
+        }
+      }
+    } catch {
+      // Fall through to heuristics
     }
-  } catch (error) {
-    // Fallback
   }
 
-  // Fallback: extract keywords from text
+  // Fallback: heuristics — keywords with stop-word filtering, full context
+  // preserved as the summary (never truncated)
   const allText = `${userPrompt} ${changesContext} ${filesModified.map(f => f.change_summary).join(" ")}`;
-  const words = allText.toLowerCase().split(/\W+/).filter(w => w.length > 3);
-  const uniqueWords = [...new Set(words)].slice(0, 10);
+  const keywords = extractKeywordsFallback(allText);
 
-  const fileMetadata: Record<string, any> = {};
+  const fileMetadata = new Map<string, FileMetadata>();
   for (const file of filesModified) {
-    const fileName = file.path.split(/[/\\]/).pop() || file.path;
-    fileMetadata[file.path] = {
+    fileMetadata.set(normalizeFilePath(file.path).toLowerCase(), {
       description: `${file.change_type}: ${file.change_summary}`,
       component_type: inferComponentType(file.path),
       feature_area: inferFeatureArea(file.path),
       keywords: extractKeywordsFromPath(file.path)
-    };
+    });
   }
 
   return {
-    keywords: uniqueWords,
+    keywords,
     fileMetadata,
-    memorySummary: changesContext.slice(0, 200)
+    memorySummary: changesContext,
+    usedFallback: true
   };
 }
 
@@ -121,11 +187,13 @@ IMPORTANT:
  */
 function inferComponentType(filePath: string): string {
   const lowerPath = filePath.toLowerCase();
+  const fileName = filePath.split(/[/\\]/).pop() || "";
 
   if (lowerPath.includes("button")) return "button";
   if (lowerPath.includes("form")) return "form";
   if (lowerPath.includes("modal") || lowerPath.includes("dialog")) return "modal";
-  if (lowerPath.includes("hook") || lowerPath.startsWith("use")) return "hook";
+  // Hook files look like useAuth.ts / use-auth.ts — NOT "user/..." paths
+  if (lowerPath.includes("hook") || /^use[A-Z_-]/.test(fileName)) return "hook";
   if (lowerPath.includes("service")) return "service";
   if (lowerPath.includes("api") || lowerPath.includes("endpoint")) return "api-endpoint";
   if (lowerPath.includes("util") || lowerPath.includes("helper")) return "utility";
@@ -195,7 +263,7 @@ function extractKeywordsFromPath(filePath: string): string[] {
  */
 export async function executeSmartMemory(
   params: RLMSmartMemoryInput
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<ToolResult> {
   const projectName = params.project_name;
 
   // Check if project exists
@@ -208,109 +276,74 @@ export async function executeSmartMemory(
           error: `Project '${projectName}' not found. Use rlm_init to create it first.`,
           success: false
         }, null, 2)
-      }]
+      }],
+      isError: true
     };
   }
 
   await updateLastAccessed(projectName);
 
-  // Load database
-  const database = await loadDatabase(projectName);
-  const now = new Date().toISOString();
-  const memoryId = `mem_${uuidv4().slice(0, 8)}`;
-
-  // Extract rich metadata using Gemini
+  // Extract rich metadata FIRST (the LLM call can take many seconds) —
+  // the database is read and written afterwards under the project lock,
+  // so concurrent writes are never lost.
   const metadata = await extractRichMetadata(
     params.user_prompt,
     params.changes_context,
     params.files_modified
   );
 
-  // Create memory entry
-  const memory: MemoryEntry = {
-    id: memoryId,
-    timestamp: now,
+  // Agent-provided areas/features go FIRST so a verbose model can never
+  // push them off the end of the keyword list.
+  const keywords = [
+    ...new Set([
+      ...(params.affected_areas || []),
+      ...(params.new_features || []).map(f => f.toLowerCase().replace(/\s+/g, "-")),
+      ...metadata.keywords
+    ])
+  ].slice(0, 15);
+
+  // Create the memory entry (locked, atomic). Full context is preserved
+  // verbatim — the LLM summary is only a search/display convenience.
+  const memory = await addMemory(projectName, {
     project_id: projectName,
     user_prompt: params.user_prompt,
     changes_summary: metadata.memorySummary,
-    files_modified: params.files_modified.map(f => f.path),
-    keywords: [
-      ...metadata.keywords,
-      ...(params.affected_areas || []),
-      ...(params.new_features || [])
-    ].slice(0, 15)
-  };
+    full_context: params.changes_context,
+    files_modified: params.files_modified.map(f => normalizeFilePath(f.path)),
+    keywords
+  });
 
-  // Add to memory log
-  database.memory_log.push(memory);
-  await saveMemoryLog(projectName, database.memory_log);
+  // Update the file map with rich metadata + edit history.
+  const deletedFiles = params.files_modified.filter(f => f.change_type === "deleted");
+  const activeFiles = params.files_modified.filter(f => f.change_type !== "deleted");
 
-  // Update file map with rich metadata
-  const updatedPaths: string[] = [];
+  const lookupMeta = (filePath: string): FileMetadata | undefined =>
+    metadata.fileMetadata.get(normalizeFilePath(filePath).toLowerCase());
 
-  for (const file of params.files_modified) {
-    const existingIndex = database.file_map.findIndex(f => f.path === file.path);
-    const fileMetadata = metadata.fileMetadata[file.path] || {
-      description: file.change_summary,
-      component_type: inferComponentType(file.path),
-      feature_area: inferFeatureArea(file.path),
-      keywords: extractKeywordsFromPath(file.path)
-    };
-
-    // Create edit history entry
-    const editEntry: EditHistoryEntry = {
-      date: now,
-      summary: file.change_summary,
-      memory_id: memoryId
-    };
-
-    if (existingIndex >= 0) {
-      // Update existing entry
-      const existing = database.file_map[existingIndex];
-      const editHistory = existing.edit_history || [];
-      editHistory.push(editEntry);
-
-      database.file_map[existingIndex] = {
-        ...existing,
-        description: file.change_type === "deleted" ? `[DELETED] ${existing.description}` : fileMetadata.description,
-        last_modified: now,
-        keywords: [...new Set([...existing.keywords, ...fileMetadata.keywords])].slice(0, 10),
-        edit_history: editHistory.slice(-10), // Keep last 10 edits
-        component_type: fileMetadata.component_type,
-        feature_area: fileMetadata.feature_area
-      };
-    } else if (file.change_type !== "deleted") {
-      // Add new entry
-      database.file_map.push({
+  const updatedPaths = await updateFileMap(
+    projectName,
+    activeFiles.map(file => {
+      const meta = lookupMeta(file.path);
+      return {
         path: file.path,
-        description: fileMetadata.description,
-        last_modified: now,
-        keywords: fileMetadata.keywords,
-        edit_history: [editEntry],
-        component_type: fileMetadata.component_type,
-        feature_area: fileMetadata.feature_area
-      });
+        description: meta?.description || file.change_summary,
+        keywords: meta?.keywords?.length ? meta.keywords : extractKeywordsFromPath(file.path),
+        component_type: meta?.component_type || inferComponentType(file.path),
+        feature_area: meta?.feature_area || inferFeatureArea(file.path),
+        edit_summary: file.change_summary,
+        memory_id: memory.id
+      };
+    })
+  );
+
+  // Deleted files leave the map entirely (consistent with rlm_manage_sitemap);
+  // the deletion itself stays on record in the memory entry.
+  const removedPaths: string[] = [];
+  for (const file of deletedFiles) {
+    const removed = await deleteFileFromMap(projectName, file.path);
+    if (removed) {
+      removedPaths.push(normalizeFilePath(file.path));
     }
-
-    updatedPaths.push(file.path);
-  }
-
-  await saveFileMap(projectName, database.file_map);
-
-  // Handle new features - update site map
-  if (params.new_features && params.new_features.length > 0) {
-    // Add a memory entry specifically for new features
-    const featureMemory: MemoryEntry = {
-      id: `feat_${uuidv4().slice(0, 8)}`,
-      timestamp: now,
-      project_id: projectName,
-      user_prompt: `Added new features: ${params.new_features.join(", ")}`,
-      changes_summary: `New features/components added to the codebase: ${params.new_features.join(", ")}. Related files: ${params.files_modified.map(f => f.path).join(", ")}`,
-      files_modified: params.files_modified.map(f => f.path),
-      keywords: ["new-feature", "addition", ...params.new_features.map(f => f.toLowerCase().replace(/\s+/g, "-"))]
-    };
-    database.memory_log.push(featureMemory);
-    await saveMemoryLog(projectName, database.memory_log);
   }
 
   return {
@@ -319,17 +352,19 @@ export async function executeSmartMemory(
       text: JSON.stringify({
         success: true,
         message: "Memory created with rich metadata",
-        memory_id: memoryId,
-        timestamp: now,
-        keywords_extracted: metadata.keywords,
+        memory_id: memory.id,
+        timestamp: memory.timestamp,
+        ai_powered: !metadata.usedFallback,
+        keywords_extracted: keywords,
         files_updated: updatedPaths.map(path => {
-          const meta = metadata.fileMetadata[path];
+          const meta = lookupMeta(path);
           return {
             path,
-            component_type: meta?.component_type || "unknown",
-            feature_area: meta?.feature_area || "general"
+            component_type: meta?.component_type || inferComponentType(path),
+            feature_area: meta?.feature_area || inferFeatureArea(path)
           };
         }),
+        files_removed_from_map: removedPaths,
         new_features_tracked: params.new_features || [],
         affected_areas: params.affected_areas || [],
         _confirmation: "The changes have been recorded. Future queries about these files will include this edit history."

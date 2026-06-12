@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Zod schemas for tool input validation
  */
 
@@ -26,7 +26,7 @@ export const RecallMemoryInputSchema = z.object({
   response_format: z.nativeEnum(ResponseFormat)
     .default(ResponseFormat.JSON)
     .describe("Output format: 'json' for structured data or 'markdown' for human-readable")
-}).strict();
+});
 
 export type RecallMemoryInput = z.infer<typeof RecallMemoryInputSchema>;
 
@@ -51,7 +51,7 @@ export const FindFilesByIntentInputSchema = z.object({
   response_format: z.nativeEnum(ResponseFormat)
     .default(ResponseFormat.JSON)
     .describe("Output format: 'json' for structured data or 'markdown' for human-readable")
-}).strict();
+});
 
 export type FindFilesByIntentInput = z.infer<typeof FindFilesByIntentInputSchema>;
 
@@ -85,7 +85,7 @@ export const CreateMemoryInputSchema = z.object({
   }))
     .optional()
     .describe("Optional descriptions for modified files to update the file map")
-}).strict();
+});
 
 export type CreateMemoryInput = z.infer<typeof CreateMemoryInputSchema>;
 
@@ -100,7 +100,7 @@ export const RLMInitInputSchema = z.object({
   working_directory: z.string()
     .optional()
     .describe("Optional - the actual working directory path where the project lives")
-}).strict();
+});
 
 export type RLMInitInput = z.infer<typeof RLMInitInputSchema>;
 
@@ -115,7 +115,7 @@ export const RLMStatusInputSchema = z.object({
   response_format: z.nativeEnum(ResponseFormat)
     .default(ResponseFormat.JSON)
     .describe("Output format: 'json' for structured data or 'markdown' for human-readable")
-}).strict();
+});
 
 export type RLMStatusInput = z.infer<typeof RLMStatusInputSchema>;
 
@@ -136,8 +136,14 @@ export const RLMIndexCodebaseInputSchema = z.object({
     .describe("Glob patterns for files to include (default: common source files)"),
   exclude_patterns: z.array(z.string())
     .optional()
-    .default(["**/node_modules/**", "**/dist/**", "**/build/**", "**/.git/**", "**/vendor/**", "**/__pycache__/**", "**/target/**", "**/.next/**", "**/coverage/**"])
-    .describe("Glob patterns for files/folders to exclude"),
+    .default([
+      "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**",
+      "**/.git/**", "**/vendor/**", "**/__pycache__/**", "**/target/**",
+      "**/.next/**", "**/coverage/**", "**/.venv/**", "**/venv/**",
+      "**/.idea/**", "**/.vscode/**", "**/.cache/**", "**/*.min.js",
+      "**/*.map", "**/*.d.ts"
+    ])
+    .describe("Glob patterns for files/folders to exclude (full glob syntax supported, e.g. '**/legacy/**' or '**/*.test.ts')"),
   max_files: z.number()
     .int()
     .min(1)
@@ -147,7 +153,7 @@ export const RLMIndexCodebaseInputSchema = z.object({
   read_content: z.boolean()
     .default(false)
     .describe("Whether to read file content for better descriptions (slower but more accurate)")
-}).strict();
+});
 
 export type RLMIndexCodebaseInput = z.infer<typeof RLMIndexCodebaseInputSchema>;
 
@@ -175,7 +181,7 @@ export const RLMQueryInputSchema = z.object({
     .max(20)
     .default(10)
     .describe("Maximum number of relevant files to return")
-}).strict();
+});
 
 export type RLMQueryInput = z.infer<typeof RLMQueryInputSchema>;
 
@@ -209,7 +215,7 @@ export const RLMSmartMemoryInputSchema = z.object({
   affected_areas: z.array(z.string())
     .optional()
     .describe("Feature areas affected by this change (e.g., 'auth', 'checkout', 'ui')")
-}).strict();
+});
 
 export type RLMSmartMemoryInput = z.infer<typeof RLMSmartMemoryInputSchema>;
 
@@ -227,7 +233,7 @@ export const RLMVerifyIndexInputSchema = z.object({
   report_format: z.enum(["summary", "detailed"])
     .default("summary")
     .describe("Format of the verification report")
-}).strict();
+});
 
 export type RLMVerifyIndexInput = z.infer<typeof RLMVerifyIndexInputSchema>;
 
@@ -259,6 +265,6 @@ export const RLMManageSitemapInputSchema = z.object({
     .min(1, "At least one operation is required")
     .max(100, "Maximum 100 operations per call")
     .describe("List of operations to perform on sitemap entries")
-}).strict();
+});
 
 export type RLMManageSitemapInput = z.infer<typeof RLMManageSitemapInputSchema>;

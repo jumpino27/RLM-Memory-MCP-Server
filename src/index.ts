@@ -2,16 +2,17 @@
 /**
  * RLM Memory MCP Server
  *
- * This is the MCP server that AI agents (Claude Code, Codex, Gemini CLI) connect to.
- * It provides tools for persistent memory and semantic file discovery.
+ * This is the MCP server that AI agents (Claude Code, Codex, Gemini CLI,
+ * Cursor, ...) connect to. It provides tools for persistent memory and
+ * semantic file discovery.
  *
- * Tools:
- * - rlm_init: Initialize a project for RLM tracking
- * - rlm_status: Get project status
- * - rlm_recall_memory: Retrieve project context by keywords
- * - rlm_find_files_by_intent: Semantic file discovery
- * - rlm_create_memory: Create memory entry (mandatory after each task)
- * - rlm_list_projects: List all tracked projects
+ * Tools (11):
+ * - rlm_query: PRIMARY — ask for relevant files + context at task start
+ * - rlm_smart_memory: MANDATORY — record changes at task end
+ * - rlm_init / rlm_status / rlm_list_projects: project management
+ * - rlm_index_codebase / rlm_verify_index: build & verify the file map
+ * - rlm_manage_sitemap: keep the file map in sync with renames/deletes
+ * - rlm_recall_memory / rlm_find_files_by_intent / rlm_create_memory: legacy
  */
 
 import * as path from "path";
@@ -26,7 +27,7 @@ dotenv.config({ path: envPath });
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { initGemini } from "./services/gemini.js";
+import { initLLM } from "./services/llm.js";
 import { z } from "zod";
 
 // Import tool executors
@@ -134,9 +135,9 @@ server.registerTool(
   "rlm_recall_memory",
   {
     title: "Recall Project Memory",
-    description: `Retrieves relevant project history and context based on keywords.
+    description: `Legacy keyword-based memory search. **Prefer rlm_query**, which searches files + memories + edit history and adds AI analysis.
 
-**Call this FIRST when starting any task!**
+Use this only when you specifically want raw memory entries for known keywords.
 
 Args:
   - project_name (string): Name of the project
@@ -190,7 +191,7 @@ server.registerTool(
   "rlm_create_memory",
   {
     title: "Create Memory",
-    description: `**MANDATORY** - Call this at the end of every task!
+    description: `Legacy basic memory creation. **Prefer rlm_smart_memory**, which extracts richer metadata (component types, feature areas) and tracks per-file edit history.
 
 Records what was done for future recall and updates the file map.
 
@@ -303,10 +304,10 @@ server.registerTool(
   "rlm_smart_memory",
   {
     title: "Create Smart Memory Entry",
-    description: `**RECOMMENDED** - Create a memory entry with rich metadata.
+    description: `**MANDATORY - Call this at the END of every task!** Creates a memory entry with rich metadata.
 
 Use this instead of rlm_create_memory for better keyword extraction and file tracking.
-Provide detailed change context and the MCP's Gemini will:
+Provide detailed change context and the MCP's AI layer will:
 - Extract optimal keywords for future semantic search
 - Classify files by component type and feature area
 - Track edit history for each file
@@ -465,14 +466,14 @@ Mixed operations:
  * Main entry point - runs the MCP server via stdio
  */
 async function main(): Promise<void> {
-  // Initialize Gemini API
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) {
-    console.error("WARNING: GEMINI_API_KEY not set in .env file. AI features will use fallback methods.");
+  // Initialize the LLM provider (OpenRouter or Google Gemini direct)
+  const llm = initLLM();
+  if (!llm.available) {
+    console.error("WARNING: No LLM API key set. AI features will use keyword fallbacks.");
+    console.error("Set OPENROUTER_API_KEY (recommended) or GEMINI_API_KEY in .env");
     console.error(`Looked for .env at: ${envPath}`);
   } else {
-    initGemini(geminiKey);
-    console.error("Gemini API initialized (key loaded from .env)");
+    console.error(`LLM initialized: ${llm.provider} (model: ${llm.model})`);
   }
 
   // Run MCP server via stdio (for AI agents)

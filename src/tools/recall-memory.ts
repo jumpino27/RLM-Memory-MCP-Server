@@ -10,7 +10,7 @@ import {
   projectExists,
   updateLastAccessed
 } from "../services/database.js";
-import { ResponseFormat, type RecallMemoryResult } from "../types.js";
+import { ResponseFormat, type RecallMemoryResult, type ToolResult } from "../types.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 
 /**
@@ -76,7 +76,7 @@ function formatMarkdown(result: RecallMemoryResult): string {
  */
 export async function executeRecallMemory(
   params: RecallMemoryInput
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<ToolResult> {
   const projectName = params.project_name;
 
   // Check if project exists
@@ -85,8 +85,12 @@ export async function executeRecallMemory(
     return {
       content: [{
         type: "text",
-        text: `Error: Project '${projectName}' not found. Use rlm_init to create it first.`
-      }]
+        text: JSON.stringify({
+          success: false,
+          error: `Project '${projectName}' not found. Use rlm_init to create it first.`
+        }, null, 2)
+      }],
+      isError: true
     };
   }
 
@@ -95,42 +99,41 @@ export async function executeRecallMemory(
 
   // Load database and search
   const database = await loadDatabase(projectName);
-  const memories = await searchMemories(projectName, params.keywords, params.limit);
+  const allMemories = await searchMemories(projectName, params.keywords, params.limit);
 
-  let result: RecallMemoryResult = {
-    memories,
-    total: memories.length,
-    project_id: database.config.project_id,
-    keywords_searched: params.keywords
-  };
-
-  // Format output
+  // Format output, iteratively shrinking until under the character limit
+  let memories = allMemories;
+  let truncated = false;
   let textContent: string;
-  if (params.response_format === ResponseFormat.MARKDOWN) {
-    textContent = formatMarkdown(result);
-  } else {
-    textContent = JSON.stringify(result, null, 2);
-  }
 
-  // Check character limit
-  if (textContent.length > CHARACTER_LIMIT) {
-    const truncatedMemories = memories.slice(0, Math.ceil(memories.length / 2));
-    result = {
-      ...result,
-      memories: truncatedMemories,
-      total: truncatedMemories.length
+  for (;;) {
+    const result: RecallMemoryResult = {
+      memories,
+      total: memories.length,
+      project_id: database.config.project_id,
+      keywords_searched: params.keywords
     };
 
     if (params.response_format === ResponseFormat.MARKDOWN) {
       textContent = formatMarkdown(result);
-      textContent += `\n\n*Note: Results truncated. Use more specific keywords.*`;
+      if (truncated) {
+        textContent += `\n\n*Note: Results truncated (showing ${memories.length} of ${allMemories.length}). Use more specific keywords.*`;
+      }
     } else {
-      textContent = JSON.stringify({
-        ...result,
-        truncated: true,
-        truncation_message: "Results truncated. Use more specific keywords."
-      }, null, 2);
+      textContent = JSON.stringify(
+        truncated
+          ? { ...result, truncated: true, truncation_message: `Results truncated: showing ${memories.length} of ${allMemories.length}. Use more specific keywords.` }
+          : result,
+        null,
+        2
+      );
     }
+
+    if (textContent.length <= CHARACTER_LIMIT || memories.length === 0) {
+      break;
+    }
+    truncated = true;
+    memories = memories.slice(0, Math.max(0, Math.floor(memories.length / 2)));
   }
 
   return {

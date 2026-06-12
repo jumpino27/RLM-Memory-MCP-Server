@@ -35,3 +35,6 @@ coverage/
 # Personal project data - DO NOT PUSH TO GITHUB
 # Contains personal website memory data
 projects/jumpino_tech/
+
+# Smoke test artifacts
+smoke-test-data/

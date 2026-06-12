@@ -7,10 +7,11 @@ import { type FindFilesByIntentInput } from "../schemas/index.js";
 import {
   getFileMap,
   projectExists,
-  updateLastAccessed
+  updateLastAccessed,
+  normalizeFilePath
 } from "../services/database.js";
-import { matchFilesToIntent } from "../services/gemini.js";
-import { ResponseFormat, type FindFilesResult, type FileMapEntry } from "../types.js";
+import { matchFilesToIntent } from "../services/llm.js";
+import { ResponseFormat, type FindFilesResult, type FileMapEntry, type ToolResult } from "../types.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 
 /**
@@ -36,7 +37,7 @@ function formatMarkdown(result: FindFilesResult): string {
     lines.push("**Suggestions:**");
     lines.push("- The file map might not include this file yet");
     lines.push("- Try using more general keywords");
-    lines.push("- Add files to the map using rlm_create_memory after modifications");
+    lines.push("- Use rlm_index_codebase to scan the codebase, or add files via rlm_smart_memory after changes");
     return lines.join("\n");
   }
 
@@ -64,7 +65,7 @@ function formatMarkdown(result: FindFilesResult): string {
  */
 export async function executeFindFiles(
   params: FindFilesByIntentInput
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<ToolResult> {
   const projectName = params.project_name;
 
   // Check if project exists
@@ -73,8 +74,12 @@ export async function executeFindFiles(
     return {
       content: [{
         type: "text",
-        text: `Error: Project '${projectName}' not found. Use rlm_init to create it first.`
-      }]
+        text: JSON.stringify({
+          success: false,
+          error: `Project '${projectName}' not found. Use rlm_init to create it first.`
+        }, null, 2)
+      }],
+      isError: true
     };
   }
 
@@ -89,7 +94,7 @@ export async function executeFindFiles(
       files: [],
       total: 0,
       query: params.user_prompt,
-      ai_reasoning: "No files in project map yet. Use rlm_create_memory to add files after modifications."
+      ai_reasoning: "No files in project map yet. Use rlm_index_codebase to scan the codebase first, or add files via rlm_smart_memory after making changes."
     };
 
     const textContent = params.response_format === ResponseFormat.MARKDOWN
@@ -101,7 +106,7 @@ export async function executeFindFiles(
     };
   }
 
-  // Use Gemini to match intent to files with enhanced data
+  // Use the LLM to match intent to files with enhanced data
   const aiResult = await matchFilesToIntent(
     params.user_prompt,
     fileMap.map(f => ({
@@ -114,46 +119,49 @@ export async function executeFindFiles(
     }))
   );
 
-  // Build result with full file info
+  // Build result with full file info — match by normalized path so
+  // separator/case drift never silently drops results.
+  const byNormalizedPath = new Map(
+    fileMap.map(f => [normalizeFilePath(f.path).toLowerCase(), f])
+  );
   const matchedFiles: FileMapEntry[] = aiResult.files
-    .map(path => fileMap.find(f => f.path === path))
+    .map(p => byNormalizedPath.get(normalizeFilePath(p).toLowerCase()))
     .filter((f): f is FileMapEntry => f !== undefined)
     .slice(0, params.limit);
 
-  let result: FindFilesResult = {
-    files: matchedFiles,
-    total: matchedFiles.length,
-    query: params.user_prompt,
-    ai_reasoning: aiResult.reasoning
-  };
-
-  // Format output
+  // Format output, iteratively shrinking until under the character limit
+  let files = matchedFiles;
+  let truncated = false;
   let textContent: string;
-  if (params.response_format === ResponseFormat.MARKDOWN) {
-    textContent = formatMarkdown(result);
-  } else {
-    textContent = JSON.stringify(result, null, 2);
-  }
 
-  // Check character limit
-  if (textContent.length > CHARACTER_LIMIT) {
-    const truncatedFiles = matchedFiles.slice(0, Math.ceil(matchedFiles.length / 2));
-    result = {
-      ...result,
-      files: truncatedFiles,
-      total: truncatedFiles.length
+  for (;;) {
+    const result: FindFilesResult = {
+      files,
+      total: files.length,
+      query: params.user_prompt,
+      ai_reasoning: aiResult.reasoning
     };
 
     if (params.response_format === ResponseFormat.MARKDOWN) {
       textContent = formatMarkdown(result);
-      textContent += `\n\n*Note: Results truncated. Be more specific in your query.*`;
+      if (truncated) {
+        textContent += `\n\n*Note: Results truncated (${matchedFiles.length - files.length} of ${matchedFiles.length} matches omitted). Be more specific in your query.*`;
+      }
     } else {
-      textContent = JSON.stringify({
-        ...result,
-        truncated: true,
-        truncation_message: "Results truncated due to size."
-      }, null, 2);
+      textContent = JSON.stringify(
+        truncated
+          ? { ...result, truncated: true, truncation_message: `Results truncated due to size: showing ${files.length} of ${matchedFiles.length} matches.` }
+          : result,
+        null,
+        2
+      );
     }
+
+    if (textContent.length <= CHARACTER_LIMIT || files.length === 0) {
+      break;
+    }
+    truncated = true;
+    files = files.slice(0, Math.max(0, Math.floor(files.length / 2)));
   }
 
   return {

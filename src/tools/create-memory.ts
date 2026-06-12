@@ -8,16 +8,23 @@ import {
   addMemory,
   updateFileMap,
   projectExists,
-  updateLastAccessed
+  updateLastAccessed,
+  getFileMap,
+  findFileIndex,
+  normalizeFilePath
 } from "../services/database.js";
-import { extractKeywords, generateFileDescription } from "../services/gemini.js";
+import { extractKeywords, generateFileDescription, mapWithConcurrency } from "../services/llm.js";
+import type { ToolResult } from "../types.js";
+
+/** Cap concurrent LLM description calls (avoid provider rate limits) */
+const DESCRIPTION_CONCURRENCY = 5;
 
 /**
  * Execute the create_memory tool
  */
 export async function executeCreateMemory(
   params: CreateMemoryInput
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<ToolResult> {
   const projectName = params.project_name;
 
   // Check if project exists
@@ -26,8 +33,12 @@ export async function executeCreateMemory(
     return {
       content: [{
         type: "text",
-        text: `Error: Project '${projectName}' not found. Use rlm_init to create it first.`
-      }]
+        text: JSON.stringify({
+          error: `Project '${projectName}' not found. Use rlm_init to create it first.`,
+          success: false
+        }, null, 2)
+      }],
+      isError: true
     };
   }
 
@@ -46,25 +57,48 @@ export async function executeCreateMemory(
     project_id: projectName,
     user_prompt: params.user_prompt,
     changes_summary: params.changes_summary,
-    files_modified: params.files_modified,
+    files_modified: params.files_modified.map(normalizeFilePath),
     keywords
   });
 
-  // Update file map if descriptions provided
+  const editSummary =
+    params.changes_summary.length > 200
+      ? `${params.changes_summary.slice(0, 200)}...`
+      : params.changes_summary;
+
+  // Update file map
   const updatedPaths: string[] = [];
   if (params.file_descriptions && params.file_descriptions.length > 0) {
     const fileEntries = params.file_descriptions.map(fd => ({
       path: fd.path,
       description: fd.description,
-      keywords: extractKeywordsSync(fd.description, fd.path)
+      keywords: extractKeywordsSync(fd.description, fd.path),
+      edit_summary: editSummary,
+      memory_id: memory.id
     }));
 
     const paths = await updateFileMap(projectName, fileEntries);
     updatedPaths.push(...paths);
   } else if (params.files_modified.length > 0) {
-    // Auto-generate descriptions for modified files
-    const fileEntries = await Promise.all(
-      params.files_modified.map(async (filePath) => {
+    // Auto-generate descriptions ONLY for files not in the map yet —
+    // existing entries keep their (often better) descriptions and just
+    // get an edit-history entry. Concurrency is capped so large change
+    // sets don't fire dozens of parallel LLM calls.
+    const existingMap = await getFileMap(projectName);
+
+    const fileEntries = await mapWithConcurrency(
+      params.files_modified,
+      DESCRIPTION_CONCURRENCY,
+      async (filePath) => {
+        const isKnown = findFileIndex(existingMap, filePath) >= 0;
+        if (isKnown) {
+          // Empty description = preserve the existing one (merge semantics)
+          return {
+            path: filePath,
+            edit_summary: editSummary,
+            memory_id: memory.id
+          };
+        }
         const description = await generateFileDescription(
           filePath,
           params.changes_summary
@@ -72,9 +106,11 @@ export async function executeCreateMemory(
         return {
           path: filePath,
           description,
-          keywords: extractKeywordsSync(description, filePath)
+          keywords: extractKeywordsSync(description, filePath),
+          edit_summary: editSummary,
+          memory_id: memory.id
         };
-      })
+      }
     );
 
     const paths = await updateFileMap(projectName, fileEntries);

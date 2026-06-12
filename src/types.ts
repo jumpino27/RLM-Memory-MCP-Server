@@ -9,6 +9,8 @@ export interface MemoryEntry {
   project_id: string;
   user_prompt: string;
   changes_summary: string;
+  /** The agent's full, verbatim change context (never truncated) */
+  full_context?: string;
   files_modified: string[];
   keywords: string[];
   embedding?: number[]; // For future vector search
@@ -59,10 +61,26 @@ export interface GeminiGenerateResponse {
   candidates: Array<{
     content: {
       parts: Array<{
-        text: string;
+        text?: string;
+        /** Present on Gemini 3 thinking parts — must be skipped */
+        thought?: boolean;
       }>;
     };
   }>;
+}
+
+// OpenRouter (OpenAI-compatible) chat completions response
+export interface OpenRouterChatResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+    finish_reason?: string;
+  }>;
+  error?: {
+    message?: string;
+    code?: number | string;
+  };
 }
 
 // Tool result types
@@ -129,3 +147,12 @@ export interface ProjectSummary {
 
 // MCP-compatible structured content type
 export type StructuredContent = Record<string, unknown>;
+
+// Common MCP tool result shape returned by all executors
+export interface ToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  /** Set when the tool call failed (MCP error semantics) */
+  isError?: boolean;
+  /** MCP SDK CallToolResult compatibility */
+  [key: string]: unknown;
+}

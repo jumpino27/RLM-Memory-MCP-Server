@@ -1,10 +1,15 @@
 /**
  * rlm_index_codebase tool implementation
  * Scans and indexes an existing codebase to build the file map
+ *
+ * Performance notes:
+ *  - read_content=false (default): pure path heuristics, ZERO LLM calls — fast
+ *  - read_content=true: one LLM call per file, capped at 5 concurrent
  */
 
 import * as fs from "fs/promises";
 import * as path from "path";
+import picomatch from "picomatch";
 import { type RLMIndexCodebaseInput } from "../schemas/index.js";
 import {
   projectExists,
@@ -13,7 +18,14 @@ import {
   addMemory,
   initializeProject
 } from "../services/database.js";
-import { generateContent } from "../services/gemini.js";
+import { generateJSON, mapWithConcurrency, isLLMAvailable } from "../services/llm.js";
+import type { ToolResult } from "../types.js";
+
+/** Cap concurrent LLM calls during indexing */
+const INDEX_CONCURRENCY = 5;
+
+/** Skip reading files larger than this (content mode) */
+const MAX_READ_BYTES = 512 * 1024;
 
 /**
  * Common words to exclude from keywords
@@ -38,8 +50,20 @@ const STOP_WORDS = new Set([
   "import", "export", "require", "module", "default", "const", "let", "var",
   // Additional common words
   "likely", "typically", "usually", "often", "serves", "serving",
-  "central", "primary", "entry", "point", "used", "various",
+  "central", "primary", "entry", "point",
   "stores", "storing", "stored", "globally", "accessible", "immutable"
+]);
+
+/**
+ * Directories that are always skipped during the scan, regardless of
+ * user-supplied exclude patterns.
+ */
+const ALWAYS_SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", "out", ".next", ".nuxt",
+  "coverage", "__pycache__", "vendor", "target", ".venv", "venv", "env",
+  ".idea", ".vscode", ".cache", ".turbo", ".svelte-kit", ".angular",
+  "bower_components", ".gradle", ".mvn", "bin", "obj", ".tox", ".pytest_cache",
+  ".mypy_cache", ".ruff_cache", "eggs", ".eggs", "htmlcov"
 ]);
 
 /**
@@ -188,10 +212,6 @@ function generateDescriptionFromPath(filePath: string): string {
     ".jsx": "React component",
     ".vue": "Vue component",
     ".svelte": "Svelte component",
-    ".test.ts": "Test file",
-    ".spec.ts": "Test specification",
-    ".test.js": "Test file",
-    ".spec.js": "Test specification",
     ".d.ts": "Type definitions",
     ".css": "Stylesheet",
     ".scss": "SCSS stylesheet",
@@ -213,11 +233,13 @@ function generateDescriptionFromPath(filePath: string): string {
  */
 function inferComponentType(filePath: string): string {
   const lowerPath = filePath.toLowerCase();
+  const fileName = filePath.split(/[/\\]/).pop() || "";
 
   if (lowerPath.includes("button")) return "button";
   if (lowerPath.includes("form")) return "form";
   if (lowerPath.includes("modal") || lowerPath.includes("dialog")) return "modal";
-  if (lowerPath.includes("hook") || lowerPath.includes("/use")) return "hook";
+  // Hook files look like useAuth.ts / use-auth.ts — NOT "user/..." paths
+  if (lowerPath.includes("hook") || /^use[A-Z_-]/.test(fileName)) return "hook";
   if (lowerPath.includes("service")) return "service";
   if (lowerPath.includes("api") || lowerPath.includes("endpoint")) return "api-endpoint";
   if (lowerPath.includes("util") || lowerPath.includes("helper")) return "utility";
@@ -273,14 +295,14 @@ function inferFeatureArea(filePath: string): string {
 }
 
 /**
- * Generate description using Gemini AI with component type and feature area
+ * Generate description using the LLM with component type and feature area.
+ * Only used when read_content=true — path-only indexing uses heuristics.
  */
 async function generateDescriptionWithAI(
   filePath: string,
-  content?: string
+  content: string
 ): Promise<{ description: string; component_type: string; feature_area: string }> {
-  const prompt = content
-    ? `Analyze this source file and extract metadata for codebase indexing.
+  const prompt = `Analyze this source file and extract metadata for codebase indexing.
 
 File: ${filePath}
 Content (first 2000 chars):
@@ -291,27 +313,41 @@ Return ONLY a JSON object with this structure:
   "description": "Brief 1-2 sentence description of purpose and functionality",
   "component_type": "type of component (e.g., 'button', 'form', 'api-endpoint', 'service', 'hook', 'util', 'config', 'page', 'modal', 'layout')",
   "feature_area": "business feature area (e.g., 'auth', 'checkout', 'dashboard', 'user-profile', 'settings', 'navigation')"
-}`
-    : `Based on this file path, extract metadata for codebase indexing.
-
-File: ${filePath}
-
-Return ONLY a JSON object with this structure:
-{
-  "description": "Brief 1-2 sentence description of what this file likely does",
-  "component_type": "type of component (e.g., 'button', 'form', 'api-endpoint', 'service', 'hook', 'util', 'config', 'page')",
-  "feature_area": "business feature area (e.g., 'auth', 'checkout', 'dashboard', 'user-profile', 'settings')"
 }`;
 
   try {
-    const response = await generateContent(prompt);
-    const match = response.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]);
+    const parsed = await generateJSON<{
+      description?: unknown;
+      component_type?: unknown;
+      feature_area?: unknown;
+    }>(prompt, {
+      schema: {
+        type: "object",
+        properties: {
+          description: { type: "string" },
+          component_type: { type: "string" },
+          feature_area: { type: "string" }
+        },
+        required: ["description", "component_type", "feature_area"],
+        additionalProperties: false
+      },
+      schemaName: "file_metadata"
+    });
+
+    if (parsed) {
       return {
-        description: parsed.description?.slice(0, 500) || generateDescriptionFromPath(filePath),
-        component_type: parsed.component_type || inferComponentType(filePath),
-        feature_area: parsed.feature_area || inferFeatureArea(filePath)
+        description:
+          typeof parsed.description === "string" && parsed.description.trim()
+            ? parsed.description.slice(0, 500)
+            : generateDescriptionFromPath(filePath),
+        component_type:
+          typeof parsed.component_type === "string" && parsed.component_type.trim()
+            ? parsed.component_type
+            : inferComponentType(filePath),
+        feature_area:
+          typeof parsed.feature_area === "string" && parsed.feature_area.trim()
+            ? parsed.feature_area
+            : inferFeatureArea(filePath)
       };
     }
   } catch {
@@ -326,100 +362,97 @@ Return ONLY a JSON object with this structure:
 }
 
 /**
- * Check if file extension matches any of the patterns
+ * Read file content for description generation.
+ * Returns undefined for binary or oversized files.
  */
-function matchesIncludePatterns(filePath: string, patterns: string[]): boolean {
-  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
-  const ext = path.extname(normalizedPath).toLowerCase();
-
-  for (const pattern of patterns) {
-    // Handle **/*.ext patterns - just check extension
-    if (pattern.startsWith("**/")) {
-      const patternExt = pattern.slice(3); // Remove **/
-      if (patternExt.startsWith("*.")) {
-        const targetExt = patternExt.slice(1).toLowerCase(); // Remove * to get .ext
-        if (ext === targetExt) {
-          return true;
-        }
-      }
+async function readContentSafely(fullPath: string): Promise<string | undefined> {
+  try {
+    const stat = await fs.stat(fullPath);
+    if (stat.size > MAX_READ_BYTES) {
+      return undefined;
     }
-    // Handle *.ext patterns
-    else if (pattern.startsWith("*.")) {
-      const targetExt = pattern.slice(1).toLowerCase();
-      if (ext === targetExt) {
-        return true;
-      }
+    const buffer = await fs.readFile(fullPath);
+    // Binary sniff: NUL byte in the first 1KB
+    const probe = buffer.subarray(0, 1024);
+    for (let i = 0; i < probe.length; i++) {
+      if (probe[i] === 0) return undefined;
     }
+    return buffer.toString("utf-8").slice(0, 3000);
+  } catch {
+    return undefined;
   }
-  return false;
 }
 
 /**
- * Check if path matches any exclude pattern
- */
-function matchesExcludePatterns(filePath: string, patterns: string[]): boolean {
-  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
-  const pathParts = normalizedPath.split("/");
-
-  for (const pattern of patterns) {
-    // Handle **/folder/** patterns
-    const cleanPattern = pattern.replace(/\*\*/g, "").replace(/\//g, "").toLowerCase();
-    if (cleanPattern && pathParts.some(part => part === cleanPattern)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Recursively scan directory for files
+ * Recursively scan directory for files matching the glob patterns.
+ * Reports whether the max_files limit cut the scan short.
  */
 async function scanDirectory(
   dirPath: string,
   includePatterns: string[],
   excludePatterns: string[],
-  basePath: string,
   maxFiles: number
-): Promise<string[]> {
+): Promise<{ files: string[]; limitHit: boolean }> {
   const files: string[] = [];
+  let limitHit = false;
+
+  // Real glob matching (picomatch). `**/*.ts` should also match `file.ts`
+  // at the root, so basename-style patterns get a second matcher.
+  // dot:true so explicit dotfile/dot-dir patterns (e.g. ".github/**/*.yml",
+  // "**/.eslintrc.js") actually work; heavy dot-dirs are skipped via
+  // ALWAYS_SKIP_DIRS during traversal instead.
+  const isIncluded = picomatch(includePatterns, { dot: true, nocase: true });
+  const isIncludedBase = picomatch(
+    includePatterns
+      .filter(p => p.startsWith("**/"))
+      .map(p => p.slice(3)),
+    { dot: true, nocase: true }
+  );
+  const isExcluded =
+    excludePatterns.length > 0
+      ? picomatch(excludePatterns, { dot: true, nocase: true })
+      : () => false;
 
   async function scan(currentPath: string): Promise<void> {
-    if (files.length >= maxFiles) return;
+    if (files.length >= maxFiles) {
+      limitHit = true;
+      return;
+    }
 
+    let entries;
     try {
-      const entries = await fs.readdir(currentPath, { withFileTypes: true });
+      entries = await fs.readdir(currentPath, { withFileTypes: true });
+    } catch {
+      return; // Skip directories we can't read
+    }
 
-      for (const entry of entries) {
-        if (files.length >= maxFiles) break;
+    for (const entry of entries) {
+      if (files.length >= maxFiles) {
+        limitHit = true;
+        break;
+      }
 
-        const fullPath = path.join(currentPath, entry.name);
-        const relativePath = path.relative(basePath, fullPath).replace(/\\/g, "/");
+      const fullPath = path.join(currentPath, entry.name);
+      const relativePath = path.relative(dirPath, fullPath).replace(/\\/g, "/");
 
-        // Check if directory/file is excluded
-        if (matchesExcludePatterns(relativePath, excludePatterns)) {
-          continue;
+      if (isExcluded(relativePath)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        if (!ALWAYS_SKIP_DIRS.has(entry.name.toLowerCase())) {
+          await scan(fullPath);
         }
-
-        if (entry.isDirectory()) {
-          // Skip common excluded directories by name
-          const skipDirs = ["node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__", "vendor", "target"];
-          if (!skipDirs.includes(entry.name.toLowerCase())) {
-            await scan(fullPath);
-          }
-        } else if (entry.isFile()) {
-          // Check if matches include patterns
-          if (matchesIncludePatterns(relativePath, includePatterns)) {
-            files.push(relativePath);
-          }
+      } else if (entry.isFile()) {
+        if (isIncluded(relativePath) || isIncludedBase(relativePath)) {
+          files.push(relativePath);
         }
       }
-    } catch (error) {
-      // Skip directories we can't read
     }
   }
 
   await scan(dirPath);
-  return files;
+  return { files, limitHit };
 }
 
 /**
@@ -427,7 +460,7 @@ async function scanDirectory(
  */
 export async function executeIndexCodebase(
   params: RLMIndexCodebaseInput
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<ToolResult> {
   const projectName = params.project_name;
   const dirPath = params.directory_path;
 
@@ -442,7 +475,8 @@ export async function executeIndexCodebase(
             error: `'${dirPath}' is not a directory`,
             success: false
           }, null, 2)
-        }]
+        }],
+        isError: true
       };
     }
   } catch {
@@ -453,7 +487,8 @@ export async function executeIndexCodebase(
           error: `Directory not found: '${dirPath}'`,
           success: false
         }, null, 2)
-      }]
+      }],
+      isError: true
     };
   }
 
@@ -466,11 +501,10 @@ export async function executeIndexCodebase(
   await updateLastAccessed(projectName);
 
   // Scan directory for files
-  const files = await scanDirectory(
+  const { files, limitHit } = await scanDirectory(
     dirPath,
     params.file_patterns || [],
     params.exclude_patterns || [],
-    dirPath,
     params.max_files
   );
 
@@ -482,96 +516,68 @@ export async function executeIndexCodebase(
           message: "No matching files found in directory",
           directory: dirPath,
           patterns: params.file_patterns,
+          hint: "Check that file_patterns match your project's languages (e.g. ['**/*.py'] for Python).",
           success: false
         }, null, 2)
       }]
     };
   }
 
-  // Process files and generate descriptions
-  const fileEntries: Array<{
-    path: string;
-    description: string;
-    keywords: string[];
-    component_type?: string;
-    feature_area?: string;
-  }> = [];
-
+  // Process files and generate descriptions.
+  // read_content=true  → LLM description per file (bounded concurrency)
+  // read_content=false → instant path heuristics, no LLM calls at all
+  const useAI = params.read_content && isLLMAvailable();
   const errors: string[] = [];
-  let processedCount = 0;
 
-  // Process in batches to avoid rate limits
-  const batchSize = 10;
-  for (let i = 0; i < files.length; i += batchSize) {
-    const batch = files.slice(i, i + batchSize);
+  const fileEntries = (
+    await mapWithConcurrency(files, INDEX_CONCURRENCY, async (relativePath) => {
+      try {
+        let metadata: { description: string; component_type: string; feature_area: string };
 
-    const batchResults = await Promise.all(
-      batch.map(async (relativePath) => {
-        try {
-          let content: string | undefined;
-
-          // Optionally read file content for better descriptions
-          if (params.read_content) {
-            try {
-              const fullPath = path.join(dirPath, relativePath);
-              const fileContent = await fs.readFile(fullPath, "utf-8");
-              content = fileContent.slice(0, 3000); // Limit content size
-            } catch {
-              // Skip files we can't read
-            }
-          }
-
-          // Generate description with component type and feature area
-          const metadata = params.read_content && content
+        if (useAI) {
+          const content = await readContentSafely(path.join(dirPath, relativePath));
+          metadata = content
             ? await generateDescriptionWithAI(relativePath, content)
-            : await generateDescriptionWithAI(relativePath);
-
-          // Extract keywords
-          const pathKeywords = extractKeywordsFromPath(relativePath);
-          const descKeywords = metadata.description
-            .toLowerCase()
-            .split(/[\W_]+/)
-            .filter(w => w.length > 2 && !STOP_WORDS.has(w));
-
-          // Add component type and feature area to keywords for better search
-          const typeKeywords = metadata.component_type ? [metadata.component_type.toLowerCase()] : [];
-          const areaKeywords = metadata.feature_area ? [metadata.feature_area.toLowerCase()] : [];
-
-          const keywords = [...new Set([
-            ...pathKeywords,
-            ...descKeywords,
-            ...typeKeywords,
-            ...areaKeywords
-          ])].slice(0, 10);
-
-          processedCount++;
-
-          return {
-            path: relativePath,
-            description: metadata.description,
-            keywords,
-            component_type: metadata.component_type,
-            feature_area: metadata.feature_area
+            : {
+                description: generateDescriptionFromPath(relativePath),
+                component_type: inferComponentType(relativePath),
+                feature_area: inferFeatureArea(relativePath)
+              };
+        } else {
+          metadata = {
+            description: generateDescriptionFromPath(relativePath),
+            component_type: inferComponentType(relativePath),
+            feature_area: inferFeatureArea(relativePath)
           };
-        } catch (error) {
-          errors.push(`Failed to process ${relativePath}: ${error}`);
-          return null;
         }
-      })
-    );
 
-    // Add successful results
-    for (const result of batchResults) {
-      if (result) {
-        fileEntries.push(result);
+        // Extract keywords
+        const pathKeywords = extractKeywordsFromPath(relativePath);
+        const descKeywords = metadata.description
+          .toLowerCase()
+          .split(/[\W_]+/)
+          .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+
+        const keywords = [...new Set([
+          ...pathKeywords,
+          ...descKeywords,
+          ...(metadata.component_type ? [metadata.component_type.toLowerCase()] : []),
+          ...(metadata.feature_area ? [metadata.feature_area.toLowerCase()] : [])
+        ])].slice(0, 10);
+
+        return {
+          path: relativePath,
+          description: metadata.description,
+          keywords,
+          component_type: metadata.component_type,
+          feature_area: metadata.feature_area
+        };
+      } catch (error) {
+        errors.push(`Failed to process ${relativePath}: ${error}`);
+        return null;
       }
-    }
-
-    // Small delay between batches to avoid rate limits
-    if (i + batchSize < files.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
+    })
+  ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
   // Update file map
   const updatedPaths = await updateFileMap(projectName, fileEntries);
@@ -614,6 +620,11 @@ export async function executeIndexCodebase(
         directory: dirPath,
         files_scanned: files.length,
         files_indexed: fileEntries.length,
+        ai_descriptions: useAI,
+        truncated: limitHit,
+        truncation_warning: limitHit
+          ? `Scan stopped at the max_files limit (${params.max_files}) — the codebase has MORE files that were NOT indexed. Re-run with a higher max_files or narrower file_patterns to cover the rest.`
+          : undefined,
         memory_id: memory.id,
         files_by_extension: byExtension,
         files_by_component_type: byComponentType,

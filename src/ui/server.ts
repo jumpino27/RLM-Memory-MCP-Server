@@ -27,7 +27,7 @@ import {
   deleteMemory,
   deleteFileFromMap
 } from "../services/database.js";
-import { initGemini, generateContent } from "../services/gemini.js";
+import { initLLM, generateContent, getLLMStatus } from "../services/llm.js";
 import { UI_PORT, PROJECTS_DIR } from "../constants.js";
 
 // Import tool executors for testing
@@ -39,15 +39,31 @@ import { executeIndexCodebase } from "../tools/index-codebase.js";
 import { executeQuery } from "../tools/query.js";
 import { executeSmartMemory } from "../tools/smart-memory.js";
 import { executeVerifyIndex } from "../tools/verify-index.js";
+import { executeManageSitemap } from "../tools/manage-sitemap.js";
+
+// Zod schemas — the SAME validation the MCP server applies, so the testing
+// UI behaves exactly like a real MCP client (defaults, bounds, coercion)
+import { z } from "zod";
+import {
+  RecallMemoryInputSchema,
+  FindFilesByIntentInputSchema,
+  CreateMemoryInputSchema,
+  RLMInitInputSchema,
+  RLMStatusInputSchema,
+  RLMIndexCodebaseInputSchema,
+  RLMQueryInputSchema,
+  RLMSmartMemoryInputSchema,
+  RLMVerifyIndexInputSchema,
+  RLMManageSitemapInputSchema
+} from "../schemas/index.js";
+import type { ToolResult } from "../types.js";
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-// Check if Gemini is available
-let geminiAvailable = false;
-
 // HTML template for the UI
 function getHTML(): string {
+  const llm = getLLMStatus();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -489,8 +505,8 @@ function getHTML(): string {
         <h1>RLM Memory Browser & Testing</h1>
         <div class="subtitle">
           Projects: ${PROJECTS_DIR.replace(/\\/g, "/")} |
-          <span id="geminiStatus" class="gemini-status ${geminiAvailable ? 'available' : 'unavailable'}">
-            Gemini: ${geminiAvailable ? 'Connected' : 'Fallback Mode'}
+          <span id="geminiStatus" class="gemini-status ${llm.available ? 'available' : 'unavailable'}">
+            AI: ${llm.available ? `${llm.provider} · ${llm.model}` : 'Fallback Mode'}
           </span>
         </div>
       </div>
@@ -562,6 +578,7 @@ function getHTML(): string {
       { name: 'rlm_recall_memory', desc: 'Retrieve memories by keywords' },
       { name: 'rlm_find_files_by_intent', desc: 'Find files by natural language' },
       { name: 'rlm_create_memory', desc: 'Create a basic memory entry' },
+      { name: 'rlm_manage_sitemap', desc: 'Delete/move/update sitemap entries', new: true },
       { name: 'rlm_status', desc: 'Get project status' },
       { name: 'rlm_list_projects', desc: 'List all projects' }
     ];
@@ -638,7 +655,7 @@ function getHTML(): string {
         \`,
         'rlm_smart_memory': \`
           <h2>rlm_smart_memory - Create Smart Memory</h2>
-          <p style="color:#8b949e;margin-bottom:20px">Create memory with rich metadata. Gemini extracts keywords and classifies files.</p>
+          <p style="color:#8b949e;margin-bottom:20px">Create memory with rich metadata. The AI layer extracts keywords and classifies files.</p>
           <div class="form-group">
             <label>Project Name</label>
             <select id="project_name">\${projectOptions}</select>
@@ -794,10 +811,32 @@ function getHTML(): string {
           <h2>rlm_list_projects - List Projects</h2>
           <p style="color:#8b949e;margin-bottom:20px">List all tracked projects.</p>
           <button class="run-btn" onclick="runTool('rlm_list_projects')">Run Test</button>
+        \`,
+        'rlm_manage_sitemap': \`
+          <h2>rlm_manage_sitemap - Manage Sitemap Entries</h2>
+          <p style="color:#8b949e;margin-bottom:20px">Delete, move, or update file entries when the codebase changes.</p>
+          <div class="form-group">
+            <label>Project Name</label>
+            <select id="project_name">\${projectOptions}</select>
+          </div>
+          <div class="form-group">
+            <label>Operations (JSON array)</label>
+            <textarea id="operations" rows="8">[
+  { "action": "update", "file_path": "src/example.ts", "updates": { "description": "Example file" } }
+]</textarea>
+          </div>
+          <button class="run-btn" onclick="runTool('rlm_manage_sitemap')">Run Test</button>
         \`
       };
 
       container.innerHTML = (forms[toolName] || '<div class="empty-state">Form not found</div>') + '<div id="testResult"></div>';
+    }
+
+    // Parse an integer input; returns undefined for cleared/invalid fields
+    // so the server-side zod defaults apply (like an omitted MCP argument).
+    function intOrOmit(id) {
+      const v = parseInt(document.getElementById(id).value);
+      return Number.isNaN(v) ? undefined : v;
     }
 
     async function runTool(toolName) {
@@ -814,7 +853,7 @@ function getHTML(): string {
               user_request: document.getElementById('user_request').value,
               include_memories: document.getElementById('include_memories').value === 'true',
               include_suggestions: document.getElementById('include_suggestions').value === 'true',
-              max_files: parseInt(document.getElementById('max_files').value)
+              max_files: intOrOmit('max_files')
             };
             break;
           case 'rlm_smart_memory':
@@ -844,7 +883,7 @@ function getHTML(): string {
             params = {
               project_name: document.getElementById('project_name').value,
               directory_path: document.getElementById('directory_path').value,
-              max_files: parseInt(document.getElementById('max_files').value),
+              max_files: intOrOmit('max_files'),
               read_content: document.getElementById('read_content').value === 'true'
             };
             break;
@@ -852,14 +891,14 @@ function getHTML(): string {
             params = {
               project_name: document.getElementById('project_name').value,
               keywords: document.getElementById('keywords').value.split(',').map(s => s.trim()),
-              limit: parseInt(document.getElementById('limit').value)
+              limit: intOrOmit('limit')
             };
             break;
           case 'rlm_find_files_by_intent':
             params = {
               project_name: document.getElementById('project_name').value,
               user_prompt: document.getElementById('user_prompt').value,
-              limit: parseInt(document.getElementById('limit').value)
+              limit: intOrOmit('limit')
             };
             break;
           case 'rlm_create_memory':
@@ -874,6 +913,12 @@ function getHTML(): string {
           case 'rlm_status':
             params = {
               project_name: document.getElementById('project_name').value
+            };
+            break;
+          case 'rlm_manage_sitemap':
+            params = {
+              project_name: document.getElementById('project_name').value,
+              operations: JSON.parse(document.getElementById('operations').value)
             };
             break;
           case 'rlm_list_projects':
@@ -929,12 +974,12 @@ function getHTML(): string {
           }
         }
 
-        // Check Gemini status
+        // Check LLM provider status
         const statusRes = await fetch('/api/status');
         const status = await statusRes.json();
         const geminiEl = document.getElementById('geminiStatus');
-        geminiEl.className = 'gemini-status ' + (status.gemini_available ? 'available' : 'unavailable');
-        geminiEl.textContent = 'Gemini: ' + (status.gemini_available ? 'Connected' : 'Fallback Mode');
+        geminiEl.className = 'gemini-status ' + (status.llm_available ? 'available' : 'unavailable');
+        geminiEl.textContent = 'AI: ' + (status.llm_available ? status.llm_provider + ' · ' + status.llm_model : 'Fallback Mode');
       } catch (err) {
         console.error('Failed to load projects:', err);
       }
@@ -1196,8 +1241,13 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/api/status", (_req, res) => {
+  const llm = getLLMStatus();
   res.json({
-    gemini_available: geminiAvailable,
+    llm_available: llm.available,
+    llm_provider: llm.provider,
+    llm_model: llm.model,
+    // legacy field kept for older clients
+    gemini_available: llm.available,
     projects_dir: PROJECTS_DIR
   });
 });
@@ -1232,118 +1282,67 @@ app.get("/api/project", async (req, res) => {
   }
 });
 
-// Testing endpoints for all tools
-app.post("/api/test/rlm_query", async (req, res) => {
-  try {
-    const result = await executeQuery(req.body);
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
+// Testing endpoints for all tools — ONE generic dispatcher.
+// Inputs are validated with the exact zod schemas the MCP server registers,
+// so the testing UI behaves identically to a real MCP client (defaults
+// applied, bounds enforced, clear 400s on bad input).
+const TOOL_TEST_REGISTRY: Record<string, {
+  schema: z.ZodTypeAny | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  execute: (params: any) => Promise<ToolResult>;
+}> = {
+  rlm_query: { schema: RLMQueryInputSchema, execute: executeQuery },
+  rlm_smart_memory: { schema: RLMSmartMemoryInputSchema, execute: executeSmartMemory },
+  rlm_verify_index: { schema: RLMVerifyIndexInputSchema, execute: executeVerifyIndex },
+  rlm_init: { schema: RLMInitInputSchema, execute: executeInit },
+  rlm_index_codebase: { schema: RLMIndexCodebaseInputSchema, execute: executeIndexCodebase },
+  rlm_recall_memory: { schema: RecallMemoryInputSchema, execute: executeRecallMemory },
+  rlm_find_files_by_intent: { schema: FindFilesByIntentInputSchema, execute: executeFindFiles },
+  rlm_create_memory: { schema: CreateMemoryInputSchema, execute: executeCreateMemory },
+  rlm_manage_sitemap: { schema: RLMManageSitemapInputSchema, execute: executeManageSitemap },
+  rlm_status: { schema: RLMStatusInputSchema, execute: executeStatus },
+  rlm_list_projects: { schema: null, execute: () => executeListProjects() }
+};
 
-app.post("/api/test/rlm_smart_memory", async (req, res) => {
-  try {
-    const result = await executeSmartMemory(req.body);
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_verify_index", async (req, res) => {
-  try {
-    const result = await executeVerifyIndex(req.body);
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_init", async (req, res) => {
-  try {
-    const result = await executeInit(req.body);
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_index_codebase", async (req, res) => {
-  try {
-    const result = await executeIndexCodebase(req.body);
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_recall_memory", async (req, res) => {
-  try {
-    const result = await executeRecallMemory(req.body);
+for (const [toolName, def] of Object.entries(TOOL_TEST_REGISTRY)) {
+  app.post(`/api/test/${toolName}`, async (req, res) => {
     try {
-      const parsed = JSON.parse(result.content[0].text);
-      res.json(parsed);
-    } catch {
-      res.json({ result: result.content[0].text, success: true });
+      let params = req.body;
+      if (def.schema) {
+        const validation = def.schema.safeParse(req.body);
+        if (!validation.success) {
+          res.status(400).json({
+            success: false,
+            error: "Invalid input",
+            issues: validation.error.issues.map(
+              i => `${i.path.join(".") || "(root)"}: ${i.message}`
+            )
+          });
+          return;
+        }
+        params = validation.data;
+      }
+
+      const result = await def.execute(params);
+      const text = result.content[0]?.text ?? "";
+
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        // Markdown/plain-text result — wrap it, honoring the error flag
+        payload = { result: text, success: !result.isError };
+      }
+
+      if (result.isError && payload.success === undefined) {
+        payload.success = false;
+      }
+      res.status(result.isError ? 400 : 200).json(payload);
+    } catch (error) {
+      res.status(500).json({ error: String(error), success: false });
     }
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_find_files_by_intent", async (req, res) => {
-  try {
-    const result = await executeFindFiles(req.body);
-    try {
-      const parsed = JSON.parse(result.content[0].text);
-      res.json(parsed);
-    } catch {
-      res.json({ result: result.content[0].text, success: true });
-    }
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_create_memory", async (req, res) => {
-  try {
-    const result = await executeCreateMemory(req.body);
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_status", async (req, res) => {
-  try {
-    const result = await executeStatus(req.body);
-    try {
-      const parsed = JSON.parse(result.content[0].text);
-      res.json(parsed);
-    } catch {
-      res.json({ result: result.content[0].text, success: true });
-    }
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
-
-app.post("/api/test/rlm_list_projects", async (_req, res) => {
-  try {
-    const result = await executeListProjects();
-    const parsed = JSON.parse(result.content[0].text);
-    res.json(parsed);
-  } catch (error) {
-    res.status(500).json({ error: String(error), success: false });
-  }
-});
+  });
+}
 
 // Delete memory endpoint
 app.delete("/api/memory", async (req, res) => {
@@ -1421,38 +1420,45 @@ app.delete("/api/file", async (req, res) => {
   }
 });
 
-// Gemini API test endpoint
-app.get("/api/test/gemini", async (_req, res) => {
+// LLM connectivity test endpoint (works with any configured provider)
+const llmTestHandler = async (_req: express.Request, res: express.Response) => {
+  const llm = getLLMStatus();
   try {
-    const response = await generateContent("Say 'Gemini is working!' in exactly those words.");
+    const response = await generateContent("Reply with exactly: LLM connection OK");
     res.json({
       success: true,
+      provider: llm.provider,
+      model: llm.model,
       response: response,
-      message: "Gemini API is working correctly"
+      message: `${llm.provider} (${llm.model}) is working correctly`
     });
   } catch (error) {
     res.json({
       success: false,
+      provider: llm.provider,
+      model: llm.model,
       error: String(error),
-      message: "Gemini API failed - using fallback mode"
+      message: "LLM API failed - using fallback mode"
     });
   }
-});
+};
+app.get("/api/test/llm", llmTestHandler);
+// Legacy alias
+app.get("/api/test/gemini", llmTestHandler);
 
 // Start server
 const port = parseInt(process.env.UI_PORT || String(UI_PORT));
 
-// Initialize Gemini if available
-const geminiKey = process.env.GEMINI_API_KEY;
-if (geminiKey) {
-  initGemini(geminiKey);
-  geminiAvailable = true;
-  console.log("✅ Gemini API initialized");
+// Initialize the LLM provider (OpenRouter or Google Gemini direct)
+const llmStatus = initLLM();
+if (llmStatus.available) {
+  console.log(`✅ LLM initialized: ${llmStatus.provider} (${llmStatus.model})`);
 } else {
-  console.log("⚠️ No GEMINI_API_KEY found - using fallback mode");
+  console.log("⚠️ No OPENROUTER_API_KEY or GEMINI_API_KEY found - using fallback mode");
 }
 
-app.listen(port, () => {
+// Bind to localhost only — this is a local dev UI, not a network service
+app.listen(port, "127.0.0.1", () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════════╗
 ║               RLM Memory Browser & Testing                     ║
@@ -1463,9 +1469,9 @@ app.listen(port, () => {
 ║                                                                ║
 ║   Features:                                                    ║
 ║   - Memory Browser: View all projects and memories             ║
-║   - Tool Testing: Test all 10 MCP tools                        ║
+║   - Tool Testing: Test all 11 MCP tools                        ║
 ║                                                                ║
-║   Gemini API: ${geminiAvailable ? 'Connected ✅' : 'Fallback Mode ⚠️'}
+║   AI Provider: ${llmStatus.available ? `${llmStatus.provider} (${llmStatus.model}) ✅` : 'Fallback Mode ⚠️'}
 ║                                                                ║
 ║   Projects directory:                                          ║
 ║   ${PROJECTS_DIR}

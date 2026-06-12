@@ -1,530 +1,280 @@
 # RLM Memory MCP Server
 
-**Recursive Large Model (RLM) Memory System** - A Model Context Protocol (MCP) server that provides AI agents with persistent memory and semantic file discovery.
+**Persistent memory + semantic file discovery for ANY AI coding agent.**
 
-The core philosophy: The AI Agent is **intentionally blinded** to the file system. Instead of using `ls`, `grep`, `find`, or `dir`, the AI relies on the MCP to be its eyes and memory.
+Works with Claude Code, OpenAI Codex, Gemini CLI, Cursor, Windsurf — anything that speaks [MCP](https://modelcontextprotocol.io).
 
-## How It Works
+## What is this?
+
+AI agents forget everything between sessions. This MCP server fixes that:
+
+- 🧠 **Memory** — after every task, the agent records *what* it changed and *why*. Next session, it remembers.
+- 🗺️ **File map** — a semantic index of your codebase ("this file is the login form", "this is the checkout API"), so the agent finds the right files **without grepping the whole repo**.
+- 🔄 **Bi-directional** — the agent *asks* the MCP ("user wants to fix the submit button — which files?") and the MCP answers with files, history, and suggestions.
+
+The core idea (Recursive Large Model): the agent stays intentionally "blind" to the filesystem and uses the MCP as its eyes and memory — making it faster, cheaper, and more focused.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     YOU (Developer)                             │
-│                                                                 │
-│   npm start → Opens UI at http://localhost:3848                 │
-│   View all projects and memories in real-time                   │
-│   Test all tools via the testing interface                      │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   projects/ directory                           │
-│   rlm-memory-mcp-server/projects/                               │
-│   ├── jumpinotech/.rlm/                                         │
-│   ├── my-app/.rlm/                                              │
-│   └── another-project/.rlm/                                     │
-└─────────────────────────────────────────────────────────────────┘
-                              ▲
-                              │
-┌─────────────────────────────────────────────────────────────────┐
-│                  AI Agents (Claude Code, Codex, etc)            │
-│                                                                 │
-│   NEW! Bi-directional communication:                            │
-│   Agent asks: "What files for this task?" → MCP answers         │
-│   MCP asks: "Is indexing complete?" → Agent confirms            │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  AI Agent (Claude Code, Codex, Gemini CLI, Cursor...)  │
+│                                                        │
+│  "User wants to fix login" ──► rlm_query               │
+│                            ◄── relevant files+history  │
+│  [does the work]                                       │
+│  "Here's what I changed"   ──► rlm_smart_memory        │
+└────────────────────────────────────────────────────────┘
+                          │ stdio (MCP)
+┌────────────────────────────────────────────────────────┐
+│  RLM Memory MCP Server                                 │
+│  • JSON storage per project (projects/<name>/.rlm/)    │
+│  • AI-powered matching via OpenRouter or Gemini        │
+│  • Web UI for you at http://localhost:3848             │
+└────────────────────────────────────────────────────────┘
 ```
-
-## Quick Start
-
-```bash
-cd rlm-memory-mcp-server
-
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Create .env file with your Gemini API key
-echo 'GEMINI_API_KEY=your-key-here' > .env
-
-# Start the UI (for you to view memories and test tools)
-npm start
-# → Opens http://localhost:3848
-```
-
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm start` | Start the UI server (for viewing memories + testing) |
-| `npm run dev` | Start UI in development mode with auto-reload |
-| `npm run mcp` | Run MCP server directly (for testing) |
-| `npm run build` | Build TypeScript to JavaScript |
-
-## Environment Variables
-
-Create a `.env` file:
-
-```env
-# Required for AI features
-GEMINI_API_KEY=your-gemini-api-key
-
-# Optional
-UI_PORT=3848
-```
-
-Get a Gemini API key at [Google AI Studio](https://aistudio.google.com/).
 
 ---
 
-## MCP Configuration for AI Agents
+## Setup in 3 Steps
 
-### Claude Code
+### 1. Install & build
 
-Add to `~/.claude.json`:
+```bash
+git clone https://github.com/jumpino27/RLM-Memory-MCP-Server.git
+cd RLM-Memory-MCP-Server
+npm install
+npm run build
+```
+
+### 2. Add an API key
+
+Copy `.env.example` to `.env` and set **one** key:
+
+```env
+# Option A (recommended): OpenRouter — one key, any model
+# https://openrouter.ai/keys
+OPENROUTER_API_KEY="sk-or-..."
+
+# Option B: Google Gemini direct — https://aistudio.google.com/
+# GEMINI_API_KEY="..."
+```
+
+- With **OpenRouter** the server uses **`google/gemini-3.5-flash`** by default — fast, cheap, near-Pro quality.
+- With **Gemini direct** it uses **`gemini-3.5-flash`**.
+- **No key at all?** Everything still works using keyword matching (just less smart).
+
+Want a different model? Set `LLM_MODEL` (e.g. `anthropic/claude-haiku-4.5` or `openai/gpt-4o-mini` on OpenRouter). See `.env.example` for all options.
+
+### 3. Connect your AI agent
+
+Replace `C:\\path\\to` with where you cloned the repo.
+
+**Claude Code** (one command):
+
+```bash
+claude mcp add rlm-memory -- node C:\\path\\to\\RLM-Memory-MCP-Server\\dist\\index.js
+```
+
+**OpenAI Codex CLI** — add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.rlm-memory]
+command = "node"
+args = ["C:\\path\\to\\RLM-Memory-MCP-Server\\dist\\index.js"]
+```
+
+**Gemini CLI** — add to `~/.gemini/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "rlm-memory": {
       "command": "node",
-      "args": ["D:\\rlm_memory\\rlm-memory-mcp-server\\dist\\index.js"]
+      "args": ["C:\\path\\to\\RLM-Memory-MCP-Server\\dist\\index.js"]
     }
   }
 }
 ```
 
-Or use CLI:
-```bash
-claude mcp add rlm-memory -- node D:\\rlm_memory\\rlm-memory-mcp-server\\dist\\index.js
-```
+**Any other MCP client**: launch `node dist/index.js` over stdio.
 
-### OpenAI Codex CLI
-
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.rlm-memory]
-command = "node"
-args = ["D:\\rlm_memory\\rlm-memory-mcp-server\\dist\\index.js"]
-```
-
-### Gemini CLI
-
-Add to `~/.gemini/mcp.json`:
-
-```json
-{
-  "servers": {
-    "rlm-memory": {
-      "command": "node",
-      "args": ["D:\\rlm_memory\\rlm-memory-mcp-server\\dist\\index.js"]
-    }
-  }
-}
-```
+> 💡 **Tell your agent how to use it:** copy the rules from [example_agents.md](./example_agents.md) into your agent's instructions file (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, …).
 
 ---
 
-## Tools Available to AI Agents
+## The Workflow
 
-> **For AI Agent Integration:** See [example_agents.md](./example_agents.md) for concise rules AI agents should follow.
+**First time on a project** — index it once:
 
-### Core Tools
+```
+rlm_init → rlm_index_codebase → rlm_verify_index
+```
 
-| Tool | Purpose |
-|------|---------|
-| `rlm_init` | Initialize a new project for tracking |
-| `rlm_status` | Get project statistics |
-| `rlm_list_projects` | List all tracked projects |
+**Every task after that** — three steps:
 
-### Discovery & Search Tools
+```
+1. rlm_query          "User wants X — which files?"   → files + history + tips
+2. (agent does the actual work)
+3. rlm_smart_memory   "Here's what I changed"         → remembered forever
+```
 
-| Tool | Purpose |
-|------|---------|
-| `rlm_query` | **PRIMARY** - Ask MCP about relevant files for a user request |
-| `rlm_recall_memory` | Retrieve relevant past context by keywords |
-| `rlm_find_files_by_intent` | Semantic file search by natural language |
-
-### Indexing & Memory Tools
-
-| Tool | Purpose |
-|------|---------|
-| `rlm_index_codebase` | Scan & index existing codebase |
-| `rlm_verify_index` | Verify indexing is complete (post-index check) |
-| `rlm_smart_memory` | **RECOMMENDED** - Create memory with rich metadata |
-| `rlm_create_memory` | Basic memory creation (legacy) |
-
-### Sitemap Management Tools
-
-| Tool | Purpose |
-|------|---------|
-| `rlm_manage_sitemap` | Delete, move, or update file entries when codebase changes |
+That's it. The more the agent works, the smarter the memory gets.
 
 ---
 
-## New Tools (v2.0)
+## The Tools
 
-### 1. `rlm_query` - Bi-Directional Communication (PRIMARY)
+### Daily drivers
 
-**The main tool for AI agent ↔ MCP communication.**
+| Tool | What it does |
+|------|--------------|
+| `rlm_query` | ⭐ **Start every task here.** Ask about the user's request → get relevant files, past memories, and suggestions |
+| `rlm_smart_memory` | ⭐ **End every task here.** Record changes with rich metadata (component types, feature areas, edit history) |
 
-AI agent asks: "The user wants to fix the login button, what files should I look at?"
-MCP's Gemini searches memory + file map + edit history and returns relevant files with context.
+### Project setup
+
+| Tool | What it does |
+|------|--------------|
+| `rlm_init` | Register a project for memory tracking |
+| `rlm_index_codebase` | Scan a codebase and build the semantic file map |
+| `rlm_verify_index` | Post-index check: "Is this everything?" — shows breakdown + gaps |
+
+### Maintenance & extras
+
+| Tool | What it does |
+|------|--------------|
+| `rlm_manage_sitemap` | Keep the file map in sync when files are deleted/moved/renamed |
+| `rlm_status` | Project statistics |
+| `rlm_list_projects` | All tracked projects |
+| `rlm_recall_memory` | Simple keyword memory search (legacy — prefer `rlm_query`) |
+| `rlm_find_files_by_intent` | Semantic file search (legacy — prefer `rlm_query`) |
+| `rlm_create_memory` | Basic memory creation (legacy — prefer `rlm_smart_memory`) |
+
+### Example: `rlm_query`
 
 ```json
 {
   "project_name": "my-app",
-  "user_request": "The user wants to fix the submit button color on the login form",
-  "include_memories": true,
-  "include_suggestions": true,
-  "max_files": 10
+  "user_request": "The user wants to fix the submit button color on the login form"
 }
 ```
 
-**Returns:**
-- `relevant_files`: Files with descriptions, recent changes, component type, feature area
-- `relevant_memories`: Past work related to this request
-- `ai_analysis`: Explanation of how to approach the task
-- `suggestions`: Tips for the AI agent
+Returns:
 
-### 2. `rlm_smart_memory` - Enhanced Memory Creation (RECOMMENDED)
+```json
+{
+  "relevant_files": [
+    { "path": "src/components/LoginForm.tsx", "description": "Login form with submit button",
+      "component_type": "form", "feature_area": "auth",
+      "recent_changes": ["Added hover state to submit button"] }
+  ],
+  "relevant_memories": [
+    { "summary": "Changed submit button to theme primary color", "date": "..." }
+  ],
+  "ai_analysis": "The submit button lives in LoginForm.tsx and uses theme.ts colors...",
+  "suggestions": ["Check theme.ts for the color tokens"]
+}
+```
 
-Creates memory entries with rich metadata. The AI agent provides detailed context, and Gemini:
-- Extracts optimal keywords for semantic search
-- Classifies files by **component type** (button, form, modal, api-endpoint, etc.)
-- Classifies files by **feature area** (auth, checkout, dashboard, etc.)
-- Tracks **edit history** for each file
+### Example: `rlm_smart_memory`
 
 ```json
 {
   "project_name": "my-app",
   "user_prompt": "Fix the submit button color",
-  "changes_context": "Changed the submit button in LoginForm to use the primary theme color instead of hardcoded blue. Also added hover state styling.",
+  "changes_context": "Changed the submit button in LoginForm to use the primary theme color instead of hardcoded blue. Added hover state.",
   "files_modified": [
-    {
-      "path": "src/components/LoginForm.tsx",
-      "change_type": "modified",
-      "change_summary": "Updated button color to use theme.primary, added hover state"
-    }
+    { "path": "src/components/LoginForm.tsx", "change_type": "modified",
+      "change_summary": "Button color now uses theme.primary, added hover state" }
   ],
-  "new_features": ["themed-buttons"],
   "affected_areas": ["auth", "ui"]
 }
 ```
 
-### 3. `rlm_verify_index` - Post-Indexing Verification
+---
 
-After indexing a codebase, this tool asks: **"Is this everything? Are you sure?"**
+## The Web UI (for you, the human)
 
-```json
-{
-  "project_name": "my-app",
-  "expected_features": ["authentication", "payment", "dashboard"],
-  "report_format": "summary"
-}
+```bash
+npm start   # → http://localhost:3848
 ```
 
-**Returns:**
-- Files indexed grouped by type and feature area
-- Potential gaps detected (e.g., "No test files found")
-- Confirmation prompt for the AI agent
-
-### 4. `rlm_manage_sitemap` - Sitemap Management
-
-**Keep your sitemap in sync when the codebase changes.**
-
-AI agents can use this tool to:
-- **Delete** entries for files that no longer exist
-- **Move** entries when files are renamed/moved
-- **Update** metadata (description, keywords, component_type, feature_area)
-
-```json
-{
-  "project_name": "my-app",
-  "operations": [
-    { "action": "delete", "file_path": "src/old-component.tsx" },
-    { "action": "move", "file_path": "src/Button.tsx", "new_path": "src/ui/Button.tsx" },
-    {
-      "action": "update",
-      "file_path": "src/api/auth.ts",
-      "updates": {
-        "description": "JWT authentication service",
-        "keywords": ["jwt", "auth", "token"],
-        "feature_area": "security"
-      }
-    }
-  ]
-}
-```
-
-**Returns:**
-- Summary of successful/failed operations
-- Detailed results for each operation
-- Current sitemap entry count
+- Browse all projects, memories, and the semantic file map
+- Test every MCP tool from the browser
+- Delete stale memories / file entries
+- See live AI provider status (e.g. `openrouter · google/gemini-3.5-flash`)
 
 ---
 
-## Enhanced Features
+## Configuration Reference
 
-### File Metadata
+All settings live in `.env` (see `.env.example`):
 
-Each file in the map now includes:
-- `component_type`: button, form, modal, hook, service, api-endpoint, etc.
-- `feature_area`: auth, checkout, dashboard, user-profile, etc.
-- `edit_history`: Array of past changes with dates and summaries
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENROUTER_API_KEY` | — | OpenRouter key (recommended) — [get one](https://openrouter.ai/keys) |
+| `GEMINI_API_KEY` | — | Google Gemini key — [get one](https://aistudio.google.com/) |
+| `LLM_PROVIDER` | `auto` | `auto` / `openrouter` / `gemini`. Auto prefers OpenRouter |
+| `LLM_MODEL` | `google/gemini-3.5-flash` (OpenRouter) / `gemini-3.5-flash` (direct) | Any model your provider offers |
+| `LLM_REASONING_EFFORT` | `low` | `minimal` / `low` / `medium` / `high` — thinking depth for helper calls |
+| `LLM_MAX_TOKENS` | `4096` | Max output tokens per call |
+| `LLM_TIMEOUT_MS` | `60000` | Per-request timeout |
+| `UI_PORT` | `3848` | Web UI port |
+| `RLM_DATA_DIR` | `<install dir>/projects` | Where project memories are stored (set it to keep data outside the install tree) |
 
-### Smart Semantic Search
-
-The `rlm_find_files_by_intent` tool now:
-- Uses component type and feature area to narrow results
-- Considers edit history for relevance scoring
-- Won't return ALL buttons when you ask for ONE specific button
-- Provides reasoning for why files were selected
-
-### Fallback Mode
-
-All tools work without Gemini API (keyword-based fallback):
-- `rlm_query`: Uses weighted keyword matching
-- `rlm_smart_memory`: Infers types from file paths
-- `rlm_find_files_by_intent`: Basic keyword search
+**Scripts:** `npm start` (web UI) · `npm run mcp` (MCP server directly) · `npm run build` · `npm test` (end-to-end smoke test) · `npm run dev` (UI with auto-reload) · `npm run typecheck`
 
 ---
 
-## Existing Tools Reference
+## How data is stored
 
-### `rlm_init` - Initialize Project
-
-```json
-{
-  "project_name": "jumpinotech",
-  "working_directory": "D:\\projects\\jumpinotech"
-}
-```
-
-Creates `projects/jumpinotech/.rlm/` with memory storage.
-
-### `rlm_recall_memory` - Recall Context (CALL FIRST!)
-
-```json
-{
-  "project_name": "jumpinotech",
-  "keywords": ["auth", "login", "session"]
-}
-```
-
-Returns relevant memories from past work.
-
-### `rlm_find_files_by_intent` - Find Files
-
-```json
-{
-  "project_name": "jumpinotech",
-  "user_prompt": "I need to fix the submit button color"
-}
-```
-
-Uses AI to find relevant files from the semantic map.
-
-### `rlm_create_memory` - Save Memory (Legacy)
-
-```json
-{
-  "project_name": "jumpinotech",
-  "user_prompt": "Fix login timeout",
-  "changes_summary": "Increased session timeout from 30min to 2hrs",
-  "files_modified": ["src/config/auth.ts"],
-  "keywords": ["auth", "session", "timeout"]
-}
-```
-
-### `rlm_index_codebase` - Index Existing Codebase
-
-```json
-{
-  "project_name": "jumpinotech",
-  "directory_path": "D:\\projects\\jumpinotech",
-  "max_files": 200,
-  "read_content": true
-}
-```
-
-**Now also extracts:** component_type, feature_area, and prompts for verification.
-
----
-
-## The RLM Workflow
-
-### For New Projects
+Everything is plain JSON — no database needed:
 
 ```
-User: "Help me work on this new project"
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 1. rlm_init                          │
-│    Initialize project                │
-└──────────────────────────────────────┘
-        │
-        ▼
-   Ready for RLM workflow!
+RLM-Memory-MCP-Server/
+└── projects/
+    └── my-app/.rlm/
+        ├── config.json       # project info
+        ├── memory_log.json   # every recorded task
+        └── file_map.json     # the semantic file index
 ```
 
-### For Existing Codebases (First Time)
-
-```
-User: "Index this codebase"
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 1. rlm_init + rlm_index_codebase     │
-│    Scans directory, builds file map  │
-│    with AI-generated descriptions    │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 2. rlm_verify_index                  │
-│    MCP asks: "Is this everything?"   │
-│    Shows what was indexed + gaps     │
-└──────────────────────────────────────┘
-        │
-        ▼
-   Project is ready!
-```
-
-### Regular Task Workflow (Recommended)
-
-```
-User: "Fix the submit button"
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 1. rlm_query (PRIMARY TOOL)          │
-│    "User wants to fix submit button" │
-│    → Gets: Relevant files, past      │
-│       memories, AI suggestions       │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 2. AI reads & fixes the files        │
-│    Using context from rlm_query      │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 3. rlm_smart_memory (MANDATORY!)     │
-│    Records changes with rich context │
-│    Updates file map with edit history│
-└──────────────────────────────────────┘
-```
-
-### Legacy Workflow (Still Supported)
-
-```
-User: "Fix the submit button"
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 1. rlm_recall_memory                 │
-│    keywords: ["submit", "button"]    │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 2. rlm_find_files_by_intent          │
-│    "Fix submit button not working"   │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 3. AI reads & fixes the files        │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ 4. rlm_create_memory                 │
-│    Records what was done             │
-└──────────────────────────────────────┘
-```
-
----
-
-## Project Structure
-
-```
-rlm-memory-mcp-server/
-├── src/
-│   ├── index.ts           # MCP server (for AI agents via stdio)
-│   ├── ui/
-│   │   └── server.ts      # Web UI (for you at localhost:3848)
-│   ├── services/
-│   │   ├── database.ts    # File-based storage
-│   │   └── gemini.ts      # Gemini AI (semantic search, keywords)
-│   ├── tools/
-│   │   ├── query.ts           # NEW: rlm_query
-│   │   ├── smart-memory.ts    # NEW: rlm_smart_memory
-│   │   ├── verify-index.ts    # NEW: rlm_verify_index
-│   │   ├── index-codebase.ts  # Enhanced with types
-│   │   ├── find-files.ts      # Enhanced semantic search
-│   │   ├── recall-memory.ts
-│   │   ├── create-memory.ts
-│   │   └── init-status.ts
-│   └── schemas/           # Zod validation
-├── projects/              # All project data stored here
-│   ├── jumpinotech/.rlm/
-│   └── my-app/.rlm/
-├── dist/                  # Built JavaScript
-├── .env                   # Your API keys
-└── package.json
-```
-
----
-
-## Web UI Features
-
-Open `http://localhost:3848` after running `npm start`:
-
-- **Real-time updates** - Auto-refreshes every 5 seconds
-- **Project browser** - See all tracked projects
-- **Memory viewer** - View all memories with timestamps
-- **File map** - See the semantic file index with component types and feature areas
-- **Search** - Filter projects by name
-- **Tool testing** - Test all MCP tools directly from the UI
+**Back up** by copying `projects/`. **Inspect** with any text editor or the web UI.
 
 ---
 
 ## FAQ
 
-### Why not store data in each project folder?
+**Does this work without an API key?**
+Yes — all tools fall back to weighted keyword matching. AI matching is just smarter.
 
-Centralized storage in `projects/` means:
-- One place to back up all AI memories
-- Easy to view across all projects in the UI
-- No cluttering project repos with `.rlm` folders
-- Works even if you delete project folders
+**Why store data centrally instead of in each repo?**
+One place to back up, browsable across projects in the UI, no `.rlm` clutter in your repos, survives repo deletion.
 
-### Can I use this without Gemini API?
+**Which agent works best?**
+Any MCP-capable agent. The tool descriptions teach the agent how to use them, and [example_agents.md](./example_agents.md) has drop-in instructions.
 
-Yes! Falls back to keyword matching. AI features just won't be as smart.
+**`rlm_query` vs `rlm_recall_memory`?**
+`rlm_query` searches files + memories + edit history and adds AI analysis. `rlm_recall_memory` only searches memories by keyword. Use `rlm_query`.
 
-### How do I back up my memories?
-
-Just copy the `projects/` folder.
-
-### What's the difference between rlm_query and rlm_recall_memory?
-
-- `rlm_query`: **Comprehensive** - Searches files + memories + edit history, returns AI analysis and suggestions
-- `rlm_recall_memory`: **Simple** - Just searches memories by keywords
-
-### What's the difference between rlm_smart_memory and rlm_create_memory?
-
-- `rlm_smart_memory`: **Rich metadata** - Extracts component types, feature areas, tracks edit history
-- `rlm_create_memory`: **Basic** - Just stores the memory entry
+**How much does the AI cost?**
+Helper calls are small and run at low reasoning effort. With `google/gemini-3.5-flash` ($1.50/M input, $9/M output) typical queries cost fractions of a cent.
 
 ---
+
+## Project structure (for contributors)
+
+```
+src/
+├── index.ts            # MCP server entry (stdio) — registers all tools
+├── ui/server.ts        # Web UI (Express) at localhost:3848
+├── services/
+│   ├── llm.ts          # Multi-provider AI layer (OpenRouter / Gemini + fallbacks)
+│   └── database.ts     # JSON file storage
+├── tools/              # MCP tool implementations
+├── schemas/index.ts    # Zod input validation
+├── types.ts            # Shared types
+└── constants.ts        # Paths, models, limits
+```
 
 ## License
 
